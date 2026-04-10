@@ -18,9 +18,9 @@ inputs:
     description: 'The envs to pass into Hurd vm'
     required: false
   mem:
-    description: 'Set the memory size of the vm'
+    description: 'Set the memory size of the vm (MB)'
     required: false
-    default: '6144'
+    default: '2048'
   cpu:
     description: 'Set the cpu cores of the vm'
     required: false

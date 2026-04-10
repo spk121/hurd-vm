@@ -7,29 +7,10 @@ import * as path from 'path';
 import * as os from 'os';
 import * as https from 'https';
 import { spawn } from 'child_process';
-import * as crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const workingDir = __dirname;
-const backgroundPromises = [];
-let activeBackgroundTasks = 0;
-
-// Check if anyvm.py supports --cache-dir (>=0.1.4)
-function isAnyvmCacheSupported(version) {
-  if (!version) return false;
-  const parts = version.split('.');
-  const major = parseInt(parts[0], 10) || 0;
-  const minor = parseInt(parts[1], 10) || 0;
-  // patch part may contain suffix, parseInt will ignore after first non-digit
-  const patch = parseInt((parts[2] || '0'), 10) || 0;
-  if (major > 0) return true;
-  if (major === 0 && minor > 1) return true;
-  if (major === 0 && minor === 1 && patch >= 4) return true;
-  return false;
-}
 
 // Helper to expand shell-style variables
 function expandVars(str, env) {
@@ -58,16 +39,13 @@ function parseConfig(filePath, initialEnv = {}) {
       continue;
     }
 
-    // Simple shell variable assignment parsing: KEY="VALUE" or KEY=VALUE
     const match = trimmed.match(/^([a-zA-Z0-9_]+)=(.*)$/);
     if (match) {
       const key = match[1];
       let value = match[2];
-      // Remove wrapping quotes
       if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
         value = value.slice(1, -1);
       }
-      // Expand variables based on current env
       value = expandVars(value, env);
       env[key] = value;
     }
@@ -127,15 +105,15 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
   const work = sshConfig.work;
   const vmwork = sshConfig.vmwork;
 
-  // Standard options for CI/CD
   const args = [
     "-o", "StrictHostKeyChecking=no",
     "-o", "UserKnownHostsFile=/dev/null",
   ];
 
   let envExports = "";
-  if (osName === 'haiku' && work && vmwork) {
-    const workRegex = new RegExp(work.replace(/\\/g, '\\\\'), 'gi');
+  // For VMs where the work path differs from the host (haiku, hurd), rewrite GITHUB_* paths
+  if ((osName === 'haiku' || osName === 'hurd') && work && vmwork && work !== vmwork) {
+    const workRegex = new RegExp(work.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
     for (const key of Object.keys(process.env)) {
       if (key.startsWith('GITHUB_') || key === 'CI' || key === 'MYTOKEN' || key === 'MYTOKEN2') {
         const val = process.env[key] || "";
@@ -146,7 +124,6 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
   }
 
   try {
-    // Pipe prefix exports + command to sh stdin
     const fullCmd = "set -eu\n" + envExports + cmd;
     await exec.exec("ssh", [...args, sshHost, "sh"], {
       input: Buffer.from(fullCmd),
@@ -161,8 +138,8 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
 
 async function handleErrorWithDebug(sshHost, vncLink, debug) {
   const message = vncLink
-    ? `Please open the remote vnc link for debugging: ${vncLink} . To finish debugging, you can run \`touch ~/continue\` in the VM. In the VM, you can use \`ssh host\` to access the host.`
-    : "Please open the remote vnc link for debugging. To finish debugging, you can run `touch ~/continue` in the VM. In the VM, you can use `ssh host` to access the host.";
+    ? `Please open the remote vnc link for debugging: ${vncLink} . To finish debugging, you can run \`touch ~/continue\` in the VM.`
+    : "Please open the remote vnc link for debugging. To finish debugging, you can run `touch ~/continue` in the VM.";
 
   core.warning(message);
 
@@ -179,8 +156,6 @@ async function handleErrorWithDebug(sshHost, vncLink, debug) {
   let counter = 0;
   while (!finished) {
     counter++;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
     try {
       if (debug === 'true') {
         core.info(`[Debug] Checking for ${continueFile} in VM (Attempt ${counter})...`);
@@ -188,70 +163,34 @@ async function handleErrorWithDebug(sshHost, vncLink, debug) {
       const exitCode = await exec.exec("ssh", [...args, `test -f ${continueFile}`], {
         silent: true,
         ignoreReturnCode: true,
-        signal: controller.signal
       });
-
-      if (debug === 'true') {
-        core.info(`[Debug] SSH exit code: ${exitCode}`);
-      }
 
       if (exitCode === 0) {
         core.info(`${continueFile} found. Cleaning up and continuing...`);
         await exec.exec("ssh", [...args, `rm -f ${continueFile}`], { silent: true });
         finished = true;
       } else if (exitCode === 1) {
-        // File not found, but SSH is fine. Just wait and retry.
         await new Promise(r => setTimeout(r, 5000));
       } else {
-        // Any other exit code (like 255) usually means SSH connection failed
-        if (debug === 'true') {
-          core.info(`[Debug] SSH failed with exit code ${exitCode}. Assuming VM exited.`);
-        }
         throw new Error("The VM has exited (SSH connection failed), so the debugging process is terminating.");
       }
     } catch (e) {
-      if (debug === 'true') {
-        core.info(`[Debug] SSH check threw error: ${e.message}`);
-      }
       throw new Error("The VM has exited, so the debugging process is terminating.");
-    } finally {
-      clearTimeout(timer);
     }
   }
 }
 
-async function install(arch, sync, builderVersion, debug, disableCache) {
+async function install(osName, sync, debug) {
   const start = Date.now();
   core.info("Installing dependencies...");
   if (process.platform === 'linux') {
     const pkgs = [
-      "qemu-utils"
+      "qemu-utils",
+      "qemu-system-x86",
     ];
-
-    if (!arch || arch === 'x86_64' || arch === 'amd64') {
-      pkgs.push("qemu-system-x86", "ovmf");
-    } else if (arch === 'aarch64' || arch === 'arm64') {
-      pkgs.push("qemu-system-arm", "qemu-efi-aarch64", "ipxe-qemu");
-    } else {
-      pkgs.push("qemu-system-misc", "u-boot-qemu", "ipxe-qemu");
-    }
 
     if (sync === 'nfs') {
       pkgs.push("nfs-kernel-server");
-    }
-    if (sync === 'rsync') {
-      let rsyncRequired = true;
-      if (builderVersion) {
-        const parts = builderVersion.split('.');
-        const major = parseInt(parts[0], 10) || 0;
-        if (major >= 2) {
-          rsyncRequired = false;
-        }
-      }
-
-      if (rsyncRequired) {
-        pkgs.push("rsync");
-      }
     }
 
     const aptOpts = [
@@ -262,10 +201,7 @@ async function install(arch, sync, builderVersion, debug, disableCache) {
       "-o", "Acquire::Languages=none",
     ];
 
-    // 1. Update with quiet mode
     await exec.exec("sudo", ["apt-get", "update", "-q"], { silent: true });
-
-    // 2. Install the packages
     await exec.exec("sudo", ["apt-get", "install", "-y", "-q", ...aptOpts, "--no-install-recommends", ...pkgs]);
 
     if (fs.existsSync('/dev/kvm')) {
@@ -317,14 +253,177 @@ async function scpToVM(sshHost, work, vmwork, osName, debug) {
   core.info("==> Done.");
 }
 
+// Generate an SSH key pair for VM access
+async function generateSSHKey(keyPath) {
+  if (!fs.existsSync(keyPath)) {
+    await exec.exec("ssh-keygen", ["-t", "ed25519", "-f", keyPath, "-N", "", "-C", "hurd-vm-action"]);
+  }
+  return fs.readFileSync(`${keyPath}.pub`, 'utf8').trim();
+}
+
+// Inject SSH public key into the Hurd disk image using qemu-nbd
+async function prepareHurdImage(imagePath, sshKeyPub, debug) {
+  core.info("Preparing Hurd image: injecting SSH key via qemu-nbd...");
+
+  // Load the nbd kernel module with partition scanning support
+  await exec.exec("sudo", ["modprobe", "nbd", "max_part=8"]);
+  await new Promise(r => setTimeout(r, 1000));
+
+  // Connect the image to the first available NBD device
+  await exec.exec("sudo", ["qemu-nbd", "--connect=/dev/nbd0", imagePath]);
+
+  // Give the kernel time to read the partition table
+  await new Promise(r => setTimeout(r, 2000));
+
+  if (debug === 'true') {
+    await exec.exec("sudo", ["fdisk", "-l", "/dev/nbd0"], { ignoreReturnCode: true });
+  }
+
+  await exec.exec("sudo", ["mkdir", "-p", "/mnt/hurd-root"]);
+
+  // Try partition 1 first (standard Debian layout), then the raw device
+  let mounted = false;
+  for (const dev of ["/dev/nbd0p1", "/dev/nbd0"]) {
+    const rc = await exec.exec("sudo", ["mount", dev, "/mnt/hurd-root"], { ignoreReturnCode: true });
+    if (rc === 0) {
+      core.info(`Mounted ${dev} successfully.`);
+      mounted = true;
+      break;
+    }
+    if (debug === 'true') {
+      core.info(`mount ${dev} returned ${rc}, trying next...`);
+    }
+  }
+
+  if (!mounted) {
+    await exec.exec("sudo", ["qemu-nbd", "--disconnect", "/dev/nbd0"], { ignoreReturnCode: true });
+    throw new Error("Could not mount any partition from Hurd image. Check that qemu-utils is installed and the image is valid.");
+  }
+
+  // Inject the SSH public key for root
+  await exec.exec("sudo", ["mkdir", "-p", "/mnt/hurd-root/root/.ssh"]);
+
+  const tmpKeyFile = path.join(os.tmpdir(), `hurd_authorized_keys_${Date.now()}`);
+  fs.writeFileSync(tmpKeyFile, sshKeyPub + "\n", { mode: 0o600 });
+  await exec.exec("sudo", ["cp", tmpKeyFile, "/mnt/hurd-root/root/.ssh/authorized_keys"]);
+  fs.unlinkSync(tmpKeyFile);
+
+  await exec.exec("sudo", ["chmod", "700", "/mnt/hurd-root/root/.ssh"]);
+  await exec.exec("sudo", ["chmod", "600", "/mnt/hurd-root/root/.ssh/authorized_keys"]);
+  await exec.exec("sudo", ["chown", "-R", "0:0", "/mnt/hurd-root/root/.ssh"]);
+
+  // Ensure sshd allows root login with pubkey authentication.
+  // Append directives to override any conflicting defaults.
+  const sshdConfig = "/mnt/hurd-root/etc/ssh/sshd_config";
+  if (fs.existsSync(sshdConfig)) {
+    await exec.exec("sudo", ["sh", "-c",
+      `printf '\\n# Added by hurd-vm action\\nPermitRootLogin yes\\nPubkeyAuthentication yes\\nAuthorizedKeysFile .ssh/authorized_keys\\nAcceptEnv CI MYTOKEN MYTOKEN2\\n' >> ${sshdConfig}`
+    ]);
+    if (debug === 'true') {
+      await exec.exec("sudo", ["tail", "-10", sshdConfig]);
+    }
+  } else {
+    core.warning(`sshd_config not found at ${sshdConfig} — SSH key auth may not work.`);
+  }
+
+  // Unmount and disconnect cleanly
+  await exec.exec("sudo", ["umount", "/mnt/hurd-root"]);
+  await exec.exec("sudo", ["qemu-nbd", "--disconnect", "/dev/nbd0"]);
+  await new Promise(r => setTimeout(r, 1000));
+
+  core.info("Hurd image prepared successfully.");
+}
+
+// Parse the nat input lines into a list of { hostPort, guestPort, proto }
+function parseNatPorts(nat) {
+  if (!nat) return [];
+  const result = [];
+  for (const line of nat.split('\n')) {
+    // Remove quotes and whitespace; handle "udp:PORT": "PORT" format
+    const trimmed = line.trim().replace(/['"]/g, '').replace(/\s+/g, '');
+    if (!trimmed) continue;
+    const isUdp = trimmed.startsWith('udp:');
+    const clean = trimmed.replace(/^udp:/, '');
+    const parts = clean.split(':');
+    if (parts.length >= 2) {
+      result.push({ hostPort: parts[0], guestPort: parts[1], proto: isUdp ? 'udp' : 'tcp' });
+    }
+  }
+  return result;
+}
+
+// Launch QEMU in the background (daemonized)
+async function startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList, debug) {
+  core.info(`Starting QEMU: ${qemuSystem} with image ${imagePath}`);
+
+  // Build the -net user hostfwd list. Always include the primary SSH port.
+  const hostfwds = [
+    `hostfwd=tcp:127.0.0.1:${sshPort}-:22`,
+    ...natPortsList.map(({ hostPort, guestPort, proto }) =>
+      `hostfwd=${proto}::${hostPort}-:${guestPort}`
+    )
+  ].join(',');
+
+  const pidFile = path.join(os.tmpdir(), 'hurd-vm.pid');
+
+  const args = [
+    "-m", `${mem}`,
+    "-drive", `file=${imagePath},cache=writeback`,
+    "-net", `user,${hostfwds}`,
+    "-net", "nic,model=e1000",
+    "-nographic",
+    "-daemonize",
+    "-pidfile", pidFile,
+  ];
+
+  // Use KVM acceleration when available (much faster)
+  if (fs.existsSync('/dev/kvm')) {
+    args.unshift("-enable-kvm");
+  }
+
+  if (cpu) {
+    args.push("-smp", cpu);
+  }
+
+  await exec.exec(qemuSystem, args);
+  core.info(`QEMU started. PID file: ${pidFile}`);
+}
+
+// Wait until SSH is accepting connections (polls every 10 seconds)
+async function waitForSSH(sshHost, timeoutSec, debug) {
+  core.info(`Waiting for SSH on ${sshHost} (timeout: ${timeoutSec}s)...`);
+  const start = Date.now();
+  let attempt = 0;
+  while ((Date.now() - start) / 1000 < timeoutSec) {
+    attempt++;
+    if (debug === 'true') {
+      core.info(`SSH attempt ${attempt}...`);
+    }
+    const rc = await exec.exec("ssh", [
+      "-o", "StrictHostKeyChecking=no",
+      "-o", "UserKnownHostsFile=/dev/null",
+      "-o", "ConnectTimeout=5",
+      "-o", "BatchMode=yes",
+      sshHost,
+      "echo ssh-ready"
+    ], { silent: debug !== 'true', ignoreReturnCode: true });
+
+    if (rc === 0) {
+      core.info(`SSH is ready after ${attempt} attempt(s) (${Math.round((Date.now() - start) / 1000)}s).`);
+      return;
+    }
+    await new Promise(r => setTimeout(r, 10000));
+  }
+  throw new Error(`Timed out waiting for SSH on ${sshHost} after ${timeoutSec}s`);
+}
+
 async function main() {
   try {
     // 1. Inputs
     const debug = core.getInput("debug");
     const releaseInput = core.getInput("release").toLowerCase();
-    const archInput = core.getInput("arch").toLowerCase();
     const inputOsName = core.getInput("osname").toLowerCase();
-    const mem = core.getInput("mem");
+    const mem = core.getInput("mem") || '2048';
     const cpu = core.getInput("cpu");
     const nat = core.getInput("nat");
     const envs = core.getInput("envs");
@@ -332,489 +431,349 @@ async function main() {
     const run = core.getInput("run");
     const sync = core.getInput("sync").toLowerCase() || 'rsync';
     const copyback = core.getInput("copyback").toLowerCase();
-    const syncTime = core.getInput("sync-time").toLowerCase();
     const disableCache = core.getInput("disable-cache").toLowerCase() === 'true';
     const debugOnError = core.getInput("debug-on-error").toLowerCase() === 'true';
-    const vncPassword = core.getInput("vnc-password");
 
     const work = path.join(process.env["HOME"], "work");
-    let vmwork = path.join(process.env["HOME"], "work");
-    if (inputOsName === 'haiku') {
-      vmwork = `/boot/home/${os.userInfo().username}/work`;
-    }
+    // Inside the Hurd VM, we connect as root whose home is /root
+    const vmwork = '/root/work';
 
     // 2. Load Config
     let env = {};
-    // Defaults
     env = parseConfig(path.join(__dirname, 'conf/default.release.conf'), env);
 
-    let release = releaseInput || env['DEFAULT_RELEASE'];
-    let arch = archInput;
+    const release = releaseInput || env['DEFAULT_RELEASE'];
 
-    // Handle Arch logic
-    if (!arch) {
-      // x86_64 implict
-    } else if (arch === 'arm64') {
-      arch = 'aarch64';
-    } else if (arch === 'x86_64' || arch === 'amd64') {
-      arch = '';
-    }
-
-
-    // Load specific conf files
-    let confName = release;
-    if (arch) confName += `-${arch}`;
-    const confPath = path.join(__dirname, `conf/${confName}.conf`);
-
+    const confPath = path.join(__dirname, `conf/${release}.conf`);
     if (!fs.existsSync(confPath)) {
-      // Attempt to look for base config if arch specific not found? fails if not found.
-      throw new Error(`Config not found: ${confPath}`);
+      throw new Error(`Config not found for release '${release}': ${confPath}`);
     }
-
     env = parseConfig(confPath, env);
 
-    const anyvmVersion = env['ANYVM_VERSION'];
-    const builderVersion = env['BUILDER_VERSION'];
+    const imageUrl   = env['IMAGE_URL'];
+    const qemuSystem = env['QEMU_SYSTEM'] || 'qemu-system-x86_64';
+    const sshUser    = env['SSH_USER']    || 'root';
+    const sshPort    = env['SSH_PORT']    || '2222';
+    const imageDate  = env['IMAGE_DATE']  || 'default';
     const osName = inputOsName;
 
-    core.startGroup("Configuration AnyVM.org");
-    core.info(`Using ANYVM_VERSION: ${anyvmVersion}`);
-    core.info(`Using BUILDER_VERSION: ${builderVersion}`);
-    core.info(`Target OS: ${osName}, Release: ${release}`);
-
-    // 3. Download anyvm.py
-    if (!anyvmVersion) {
-      throw new Error("ANYVM_VERSION not defined in config");
+    if (!imageUrl) {
+      throw new Error(`IMAGE_URL not defined in ${confPath}`);
     }
-    const anyvmUrl = `https://raw.githubusercontent.com/anyvm-org/anyvm/v${anyvmVersion}/anyvm.py`;
-    const anyvmPath = path.join(__dirname, 'anyvm.py');
-    await downloadFile(anyvmUrl, anyvmPath);
+
+    core.startGroup("Configuration");
+    core.info(`Release:     ${release}`);
+    core.info(`OS Name:     ${osName}`);
+    core.info(`QEMU System: ${qemuSystem}`);
+    core.info(`Image URL:   ${imageUrl}`);
+    core.info(`SSH User:    ${sshUser}`);
+    core.info(`SSH Port:    ${sshPort}`);
     core.endGroup();
 
-    core.startGroup("Installing dependencies");
-    await install(arch, sync, builderVersion, debug, disableCache);
-    core.endGroup();
-
-    // 4. Start VM
-    // Params mapping:
-    // anyvm.py --os <os> --release <release> --builder <builder> ... -d
-    let args = [anyvmPath, "--os", osName, "--release", release];
-
-    // Pass arch to anyvm if specified
-    if (arch) {
-      args.push("--arch", arch);
-    }
-
-    // Support configurable data dir; cache dir is what anyvm uses to store artifacts
-    const dataDirInput = core.getInput("data-dir") || '';
-    const datadir = dataDirInput ? expandVars(dataDirInput, process.env) : path.join(__dirname, 'output');
-    const remoteVncLinkFile = path.join(datadir, "remotevnc.link");
-    if (!fs.existsSync(datadir)) {
-      fs.mkdirSync(datadir, { recursive: true });
-    }
-    args.push("--data-dir", datadir);
-
-    // cacheDir is what we restore/save via @actions/cache and pass to anyvm.py --cache-dir (>=0.1.4)
-    const cacheSupported = isAnyvmCacheSupported(anyvmVersion);
-    const cacheDirInput = core.getInput("cache-dir") || '';
-    let cacheDir;
-    const archForKey = arch || (process.arch === 'x64' ? 'amd64' : process.arch);
-    const cacheKey = `${osName}-${release}-${builderVersion || 'default'}-${archForKey}-v2`;
-    const restoreKeys = [cacheKey];
-    let restoredKey = null;
-
-    core.startGroup("Cache");
-    if (cacheSupported && !disableCache) {
-      cacheDir = cacheDirInput ? expandVars(cacheDirInput, process.env) : path.join(os.tmpdir(), cacheKey);
-      if (!fs.existsSync(cacheDir)) {
-        fs.mkdirSync(cacheDir, { recursive: true });
-      }
-
-      try {
-        const restoreStart = Date.now();
-        try {
-          restoredKey = await cache.restoreCache([cacheDir], cacheKey, restoreKeys);
-        } catch (e) {
-          core.warning(`cache.restoreCache() threw error: ${e.message}`);
-        }
-        const restoreElapsed = Date.now() - restoreStart;
-        core.info(`cache.restoreCache() took ${restoreElapsed}ms`);
-
-        if (restoredKey) {
-          core.info(`Cache restored: ${restoredKey}`);
-          if (debug === 'true' && cacheDir && fs.existsSync(cacheDir)) {
-            core.info('Restored cache dir preview (debug)');
-            try {
-              await exec.exec('ls', ['-R', cacheDir]);
-            } catch (e) {
-              core.warning(`Listing restored cache dir failed: ${e.message}`);
-            }
-          }
-        } else {
-          // Detect if restore failed silently but left files (e.g. tar error)
-          const files = fs.readdirSync(cacheDir).filter(f => f !== '.' && f !== '..');
-          if (files.length > 0) {
-            core.warning(`Cache hit might have occurred but restoration failed (corrupted or partial download). Clearing cache directory.`);
-            try {
-              fs.rmSync(cacheDir, { recursive: true, force: true });
-              fs.mkdirSync(cacheDir, { recursive: true });
-            } catch (err) {
-              core.warning(`Failed to clear corrupted cache directory: ${err.message}`);
-            }
-          } else {
-            core.info('No cache hit for VM cache directory');
-          }
-        }
-      } catch (e) {
-        core.warning(`Cache restore process failed: ${e.message}`);
-      }
-
-      if (!restoredKey) {
-        try {
-          if (cacheDir && fs.existsSync(cacheDir)) {
-            core.info(`Clearing cache directory for a fresh start: ${cacheDir}`);
-            fs.rmSync(cacheDir, { recursive: true, force: true });
-            fs.mkdirSync(cacheDir, { recursive: true });
-          }
-        } catch (err) {
-          core.warning(`Failed to clear cache directory: ${err.message}`);
-        }
-      }
-
-      // Pass cache dir to anyvm
-      args.push("--cache-dir", cacheDir);
-    } else {
-      core.info(`anyvm cache-dir skip cache (cacheSupported: ${cacheSupported}, disableCache: ${disableCache}).`);
-    }
-    core.endGroup();
-
-    if (builderVersion) {
-      args.push("--builder", builderVersion);
-    }
-
-    if (syncTime === 'true') {
-      args.push("--sync-time");
-    } else if (syncTime === 'false') {
-      args.push("--sync-time", "off");
-    }
-
-    if (debug === 'true') {
-      args.push("--debug");
-    }
-
-    if (cpu) {
-      args.push("--cpu", cpu);
-    }
-    if (mem) {
-      args.push("--mem", mem);
-    }
-    if (nat) {
-      const natLines = nat.split('\n');
-      for (const line of natLines) {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          continue;
-        }
-        // Remove quotes and spaces from the line: "8080": "80" -> 8080:80
-        const cleanNat = trimmed.replace(/['"\s]/g, '');
-        args.push("-p", cleanNat);
-      }
-    }
-
-    let isScpOrRsync = false;
-    if (sync) {
-      if (process.platform !== 'win32') {
-        const homeDir = process.env.HOME;
-        if (homeDir) {
-          core.startGroup("Permissions");
-          try {
-            core.info(`Setting permissions for ${homeDir}...`);
-            fs.chmodSync(homeDir, '755');
-          } catch (err) {
-            core.warning(`Failed to chmod ${homeDir}: ${err.message}`);
-          }
-          core.endGroup();
-        }
-      }
-      if (sync === 'scp' || sync === 'rsync') {
-        //we will sync later
-        isScpOrRsync = true;
-      } else {
-        args.push("--sync", sync);
-        args.push("-v", `${work}:${vmwork}`);
-      }
-    }
-
-
-    args.push("-d"); // Background/daemon
-
-    let sshHost = osName;
-    args.push("--ssh-name", sshHost);
-
-    args.push("--snapshot");
-    if (osName === 'haiku') {
-      args.push("--vga", "std");
-    }
-
-    if (debugOnError) {
-      args.push("--remote-vnc");
-      args.push("--accept-vm-ssh");
-      args.push("--remote-vnc-link-file", remoteVncLinkFile);
-      if (vncPassword) {
-        args.push("--vnc-password", vncPassword);
-      }
-
-    } else {
-      args.push("--vnc", "off");
-    }
-
-    core.startGroup("Starting VM with anyvm.org");
-    let output = "";
-    const options = {
-      listeners: {
-        stdout: (data) => {
-          output += data.toString();
-        }
-      }
-    };
-    await exec.exec("python3", args, options);
-    core.endGroup();
-
-    // Save cache for anyvm cache directory immediately after VM start/prepare
-    if (cacheSupported && !disableCache) {
-      const saveVmCache = async () => {
-        activeBackgroundTasks++;
-        core.info("Save Cache (Background)");
-        if (debug === 'true' && cacheDir && fs.existsSync(cacheDir)) {
-          core.info('Cache dir preview (debug)');
-          try {
-            await exec.exec('du', ['-sh', cacheDir]);
-            await exec.exec('find', [cacheDir, '-maxdepth', '5', '-type', 'f']);
-          } catch (e) {
-            core.warning(`Listing cache dir failed: ${e.message}`);
-          }
-        }
-        try {
-          if (!restoredKey && cacheDir && fs.existsSync(cacheDir)) {
-            await cache.saveCache([cacheDir], cacheKey);
-            core.info(`Cache saved: ${cacheKey}`);
-          } else {
-            core.info('Skip cache save (cache was restored or directory missing)');
-          }
-        } catch (e) {
-          if (e.message && (e.message.includes('cache entry not found') ||
-            e.message.includes('already exists') ||
-            e.message.includes('Cache already exists'))) {
-            core.info(`Cache save skipped (benign): ${e.message}`);
-          } else {
-            core.warning(`Cache save failed: ${e.message}`);
-          }
-        } finally {
-          activeBackgroundTasks--;
-        }
-      };
-      backgroundPromises.push(saveVmCache());
-    }
-
-    core.startGroup("SSH Config");
+    // 3. Generate SSH key pair for this run
+    core.startGroup("SSH Key");
     const sshDir = path.join(process.env["HOME"], ".ssh");
     if (!fs.existsSync(sshDir)) {
       fs.mkdirSync(sshDir, { recursive: true });
     }
-    const sshConfigPath = path.join(sshDir, "config");
+    const sshKeyPath = path.join(sshDir, "hurd_vm_key");
+    const sshKeyPub = await generateSSHKey(sshKeyPath);
+    core.info(`SSH public key: ${sshKeyPub}`);
+    core.endGroup();
 
-    let sendEnvs = [];
-    if (envs) {
-      sendEnvs.push(envs);
-    }
-    // Only use wildcard GITHUB_* if not on Haiku (since we use injection on Haiku)
-    if (osName !== 'haiku') {
-      sendEnvs.push("GITHUB_*");
-    }
-    sendEnvs.push("CI");
+    // 4. Install dependencies
+    core.startGroup("Installing dependencies");
+    await install(osName, sync, debug);
+    core.endGroup();
 
-    if (sendEnvs.length > 0) {
-      fs.appendFileSync(sshConfigPath, `Host ${sshHost}\n  SendEnv ${sendEnvs.join(" ")}\n`);
+    // 5. Cache: try to restore the compressed disk image archive.
+    // Use RUNNER_TEMP so the path is stable across action version bumps.
+    const cacheKey = `hurd-image-${release}-${imageDate}-v1`;
+    const dataDir = core.getInput("data-dir")
+      ? expandVars(core.getInput("data-dir"), process.env)
+      : path.join(process.env['RUNNER_TEMP'] || os.tmpdir(), 'hurd-vm-data');
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    fs.appendFileSync(sshConfigPath, "Host *\n  StrictHostKeyChecking no\n");
-    if (debug) {
-      core.info("SSH config content:");
-      core.info(fs.readFileSync(sshConfigPath, "utf8"));
+    const archiveFileName = `debian-hurd-${release}.img.tar.gz`;
+    const archivePath = path.join(dataDir, archiveFileName);
+
+    core.startGroup("Cache");
+    let cacheHit = false;
+    if (!disableCache) {
+      try {
+        // restoreKeys: first try exact match, then any image for this release
+        const restoredKey = await cache.restoreCache(
+          [archivePath],
+          cacheKey,
+          [`hurd-image-${release}-`]
+        );
+        if (restoredKey && fs.existsSync(archivePath)) {
+          cacheHit = true;
+          core.info(`Cache hit: ${restoredKey}`);
+        } else {
+          core.info("No cache hit for disk image.");
+        }
+      } catch (e) {
+        core.warning(`Cache restore failed: ${e.message}`);
+      }
+    } else {
+      core.info("Cache disabled.");
     }
     core.endGroup();
 
+    // 6. Download image if not cached, then save to cache before starting the VM.
+    // Saving before VM start ensures the download is cached even if the VM
+    // fails to boot — otherwise process.exit(1) kills any background upload.
+    if (!cacheHit || !fs.existsSync(archivePath)) {
+      core.startGroup("Downloading Hurd disk image");
+      await downloadFile(imageUrl, archivePath);
+      core.endGroup();
+
+      if (!disableCache) {
+        core.startGroup("Saving image to cache");
+        try {
+          await cache.saveCache([archivePath], cacheKey);
+          core.info(`Cache saved: ${cacheKey}`);
+        } catch (e) {
+          if (e.message && (e.message.includes('already exists') || e.message.includes('Cache already exists'))) {
+            core.info(`Cache save skipped (benign): ${e.message}`);
+          } else {
+            core.warning(`Cache save failed: ${e.message}`);
+          }
+        }
+        core.endGroup();
+      }
+    }
+
+    // 7. Extract the image archive
+    core.startGroup("Extracting disk image");
+    const extractDir = path.join(dataDir, `hurd-extract-${release}`);
+    if (!fs.existsSync(extractDir)) {
+      fs.mkdirSync(extractDir, { recursive: true });
+    }
+    // Remove any stale extracted image to start fresh
+    const existingImgs = fs.readdirSync(extractDir).filter(f => f.endsWith('.img'));
+    for (const f of existingImgs) {
+      fs.unlinkSync(path.join(extractDir, f));
+    }
+    await exec.exec("tar", ["-xf", archivePath, "-C", extractDir]);
+    const imgFiles = fs.readdirSync(extractDir).filter(f => f.endsWith('.img'));
+    if (imgFiles.length === 0) {
+      throw new Error(`No .img file found after extracting ${archivePath} into ${extractDir}`);
+    }
+    const imagePath = path.join(extractDir, imgFiles[0]);
+    core.info(`Using image: ${imagePath}`);
+    core.endGroup();
+
+    // 8. Prepare image: inject SSH key via qemu-nbd
+    core.startGroup("Preparing image (SSH key injection)");
+    await prepareHurdImage(imagePath, sshKeyPub, debug);
+    core.endGroup();
+
+    // 9. Parse NAT port mappings
+    const natPortsList = parseNatPorts(nat);
+    if (debug === 'true') {
+      core.info(`NAT ports: ${JSON.stringify(natPortsList)}`);
+    }
+
+    // 10. Start QEMU
+    core.startGroup("Starting Hurd VM");
+    await startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList, debug);
+    core.endGroup();
+
+    // 11. Wait for SSH
+    core.startGroup("Waiting for SSH");
+    // Use a named SSH host alias so ssh/scp/rsync commands use the right settings
+    const sshHostAlias = osName || 'hurd';
+
+    // Write SSH config before waiting (so ssh uses the right key/port)
+    const sshConfigPath = path.join(sshDir, "config");
+    let sshConfigEntry = `Host ${sshHostAlias}\n`;
+    sshConfigEntry += `  HostName 127.0.0.1\n`;
+    sshConfigEntry += `  Port ${sshPort}\n`;
+    sshConfigEntry += `  User ${sshUser}\n`;
+    sshConfigEntry += `  IdentityFile ${sshKeyPath}\n`;
+    sshConfigEntry += `  StrictHostKeyChecking no\n`;
+    sshConfigEntry += `  UserKnownHostsFile /dev/null\n`;
+
+    // Add SendEnv for user-specified env vars only.
+    // GITHUB_* vars are NOT sent via SendEnv because they contain the host path
+    // (/home/runner/...) which doesn't exist inside the VM; execSSH rewrites them.
+    let sendEnvs = [];
+    if (envs) sendEnvs.push(envs);
+    sendEnvs.push("CI");
+    if (sendEnvs.length > 0) {
+      sshConfigEntry += `  SendEnv ${sendEnvs.join(" ")}\n`;
+    }
+    sshConfigEntry += "\n";
+
+    // Also allow all other hosts with no strict checking
+    sshConfigEntry += "Host *\n  StrictHostKeyChecking no\n";
+
+    fs.writeFileSync(sshConfigPath, sshConfigEntry);
+
+    if (debug === 'true') {
+      core.info("SSH config:");
+      core.info(fs.readFileSync(sshConfigPath, 'utf8'));
+    }
+
+    // Hurd can take a while to boot — allow up to 5 minutes
+    await waitForSSH(sshHostAlias, 300, debug);
+    core.endGroup();
+
     const sshConfig = {
-      host: sshHost,
+      host: sshHostAlias,
       osName: osName,
       work: work,
       vmwork: vmwork
     };
 
-    //support Custom shell
+    // 12. Register a custom shell wrapper so users can write: shell: hurd {0}
     const localBinDir = path.join(process.env["HOME"], ".local", "bin");
     if (!fs.existsSync(localBinDir)) {
       fs.mkdirSync(localBinDir, { recursive: true });
     }
-
-    const sshWrapperPath = path.join(localBinDir, sshHost);
-    const sshWrapperContent = `#!/usr/bin/env sh\n\nssh ${sshHost} sh<$1\n`;
+    const sshWrapperPath = path.join(localBinDir, sshHostAlias);
+    const sshWrapperContent = `#!/usr/bin/env sh\n\nssh ${sshHostAlias} sh<$1\n`;
     fs.writeFileSync(sshWrapperPath, sshWrapperContent);
     fs.chmodSync(sshWrapperPath, '755');
 
+    // 13. Run onStarted hook
     const onStartedHook = path.join(__dirname, 'hooks', 'onStarted.sh');
     if (fs.existsSync(onStartedHook)) {
-      core.startGroup(`Running onStarted hook: ${onStartedHook}`);
+      core.startGroup(`Running onStarted hook`);
       const hookContent = fs.readFileSync(onStartedHook, 'utf8');
       await execSSH(hookContent, sshConfig, false, debug !== 'true');
       core.endGroup();
     }
 
-    if (isScpOrRsync) {
-      core.startGroup("Syncing source code to VM");
-      // Install rsync in VM if needed
-      if (sync !== 'scp') {
-        core.info("Installing rsync in VM...");
-        if (osName.includes('netbsd')) {
-          await execSSH("/usr/sbin/pkg_add rsync", { ...sshConfig }, true);
+    // 14. File sync
+    if (process.platform !== 'win32') {
+      const homeDir = process.env.HOME;
+      if (homeDir) {
+        try {
+          fs.chmodSync(homeDir, '755');
+        } catch (err) {
+          core.warning(`Failed to chmod ${homeDir}: ${err.message}`);
         }
       }
+    }
 
+    // sshfs/nfs require kernel-level mounting which depends on anyvm infrastructure.
+    // For Hurd we fall back to rsync for those modes and still do copyback.
+    let effectiveSync = sync;
+    if (sync === 'sshfs' || sync === 'nfs') {
+      core.warning(`Sync mode '${sync}' is not yet implemented for Hurd; falling back to rsync.`);
+      effectiveSync = 'rsync';
+    }
+
+    let isScpOrRsync = false;
+    if (effectiveSync === 'scp' || effectiveSync === 'rsync') {
+      isScpOrRsync = true;
+    }
+
+    if (isScpOrRsync) {
+      core.startGroup("Syncing source code to VM");
       await execSSH(`rm -rf ${vmwork}`, { ...sshConfig });
       await execSSH(`mkdir -p ${vmwork}`, { ...sshConfig });
-      if (sync === 'scp') {
+      if (effectiveSync === 'scp') {
         core.info("Syncing via SCP");
-        await scpToVM(sshHost, work, vmwork, osName, debug);
+        await scpToVM(sshHostAlias, work, vmwork, osName, debug);
       } else {
         core.info("Syncing via Rsync");
-        const rsyncArgs = [debug === 'true' ? "-avrtopg" : "-artopg", "--exclude", "_actions", "--exclude", "_PipelineMapping", "-e", "ssh", work + "/", `${sshHost}:${vmwork}/`];
+        const rsyncArgs = [
+          debug === 'true' ? "-avrtopg" : "-artopg",
+          "--exclude", "_actions",
+          "--exclude", "_PipelineMapping",
+          "-e", "ssh",
+          work + "/",
+          `${sshHostAlias}:${vmwork}/`
+        ];
         await exec.exec("rsync", rsyncArgs);
-        if (debug) {
-          core.startGroup("Debug: Checking VM work directory content");
-          await execSSH(`tree -L 2 ${vmwork}`, { ...sshConfig });
+        if (debug === 'true') {
+          core.startGroup("Debug: VM work directory");
+          await execSSH(`ls -la ${vmwork}`, { ...sshConfig });
           core.endGroup();
         }
       }
       core.endGroup();
     }
-    if (sync !== 'no') {
+
+    if (effectiveSync !== 'no') {
       core.startGroup('Creating workdir symlink');
-      await execSSH(`ln -s ${vmwork} $HOME/work`, { ...sshConfig });
+      await execSSH(`ln -sf ${vmwork} $HOME/work`, { ...sshConfig });
       core.endGroup();
     }
+
+    // 15. Run prepare
     try {
       core.startGroup("Run 'prepare' in VM");
       if (prepare) {
-        const prepareCmd = (sync !== 'no') ? `cd "$GITHUB_WORKSPACE"\n${prepare}` : prepare;
+        const prepareCmd = (effectiveSync !== 'no') ? `cd "$GITHUB_WORKSPACE"\n${prepare}` : prepare;
         await execSSH(prepareCmd, { ...sshConfig });
       }
       core.endGroup();
     } catch (err) {
       core.endGroup();
       if (debugOnError) {
-        let vncLink = "";
-        if (fs.existsSync(remoteVncLinkFile)) {
-          vncLink = fs.readFileSync(remoteVncLinkFile, 'utf8').split('\n')[0].trim();
-        }
-        await handleErrorWithDebug(sshHost, vncLink, debug);
+        await handleErrorWithDebug(sshHostAlias, "", debug);
       } else {
         throw err;
       }
     }
 
+    // 16. Run user command
     try {
       core.startGroup("Run 'run' in VM");
       if (run) {
-        const runCmd = (sync !== 'no') ? `cd "$GITHUB_WORKSPACE"\n${run}` : run;
+        const runCmd = (effectiveSync !== 'no') ? `cd "$GITHUB_WORKSPACE"\n${run}` : run;
         await execSSH(runCmd, { ...sshConfig });
       }
       core.endGroup();
     } catch (err) {
       core.endGroup();
       if (debugOnError) {
-        let vncLink = "";
-        if (fs.existsSync(remoteVncLinkFile)) {
-          vncLink = fs.readFileSync(remoteVncLinkFile, 'utf8').split('\n')[0].trim();
-        }
-        await handleErrorWithDebug(sshHost, vncLink, debug);
+        await handleErrorWithDebug(sshHostAlias, "", debug);
       } else {
         throw err;
       }
     }
 
-    // 7. Copyback
-    if (copyback !== 'false' && sync !== 'no' && sync !== 'sshfs' && sync !== 'nfs') {
-      // Wait for background tasks to finish before copyback to avoid file conflicts
-      if (backgroundPromises.length > 0 && activeBackgroundTasks > 0) {
-        core.info(`Waiting for ${activeBackgroundTasks} background tasks to complete before copyback (max 60s)...`);
-        const timeoutPromise = new Promise((resolve) => setTimeout(() => {
-          if (activeBackgroundTasks > 0) {
-            core.warning(`Background tasks timed out after 60s. Continuing with copyback...`);
-          }
-          resolve();
-        }, 60000));
-        await Promise.race([Promise.allSettled(backgroundPromises), timeoutPromise]);
-      }
-
+    // 17. Copy results back from VM to host
+    if (copyback !== 'false' && effectiveSync !== 'no') {
       const workspace = process.env['GITHUB_WORKSPACE'];
       if (workspace) {
         core.startGroup("Copyback artifacts");
-        if (sync === 'scp') {
-          let useCpio = true;
-          if (osName === 'haiku') {
-            try {
-              await execSSH("command -v cpio", sshConfig);
-            } catch (e) {
-              useCpio = false;
-            }
-          }
-
-          const remoteTarCmd = useCpio
-            ? `cd "${vmwork}" && find . -name .git -prune -o -print | cpio -o -H ustar`
-            : `cd "${vmwork}" && tar -cf - --exclude .git .`;
-
-          core.info(`Exec SSH: ${remoteTarCmd}`);
+        if (effectiveSync === 'scp') {
+          const remoteTarCmd = `cd "${vmwork}" && tar -cf - --exclude .git .`;
+          core.info(`Remote tar: ${remoteTarCmd}`);
 
           await new Promise((resolve, reject) => {
-            const sshProc = spawn("ssh", ["-o", "StrictHostKeyChecking=no", sshHost, remoteTarCmd]);
+            const sshProc = spawn("ssh", ["-o", "StrictHostKeyChecking=no", sshHostAlias, remoteTarCmd]);
             const tarProc = spawn("tar", ["-xf", "-"], { cwd: work });
 
             sshProc.stdout.pipe(tarProc.stdin);
+            sshProc.stderr.on('data', (d) => core.info(`[SSH] ${d}`));
+            tarProc.stderr.on('data', (d) => core.info(`[TAR] ${d}`));
 
-            // Handle parsing loop of stderr if needed, or just pipe to process.stderr
-            sshProc.stderr.on('data', (data) => core.info(`[SSH STDERR] ${data}`));
-            tarProc.stderr.on('data', (data) => core.info(`[TAR STDERR] ${data}`));
-
-            sshProc.on('close', (code) => {
-              if (code !== 0) reject(new Error(`SSH exited with code ${code}`));
-            });
-
-            tarProc.on('close', (code) => {
-              if (code !== 0) reject(new Error(`Tar exited with code ${code}`));
-              else resolve();
-            });
-
+            sshProc.on('close', (code) => { if (code !== 0) reject(new Error(`SSH exited ${code}`)); });
+            tarProc.on('close', (code) => { if (code !== 0) reject(new Error(`tar exited ${code}`)); else resolve(); });
             sshProc.on('error', reject);
             tarProc.on('error', reject);
           });
         } else {
-          await exec.exec("rsync", [debug === 'true' ? "-av" : "-a", "--exclude", ".git", "-e", "ssh", `${sshHost}:${vmwork}/`, `${work}/`]);
+          await exec.exec("rsync", [
+            debug === 'true' ? "-av" : "-a",
+            "--exclude", ".git",
+            "-e", "ssh",
+            `${sshHostAlias}:${vmwork}/`,
+            `${work}/`
+          ]);
         }
         core.endGroup();
       }
-    }
-
-    if (backgroundPromises.length > 0) {
-      if (activeBackgroundTasks > 0) {
-        core.info(`Waiting for ${activeBackgroundTasks} background tasks to complete (max 60s)...`);
-      }
-      const timeoutPromise = new Promise((resolve) => setTimeout(() => {
-        if (activeBackgroundTasks > 0) {
-          core.warning(`Background tasks timed out after 60s. Continuing...`);
-        }
-        resolve();
-      }, 60000));
-      await Promise.race([Promise.allSettled(backgroundPromises), timeoutPromise]);
     }
 
   } catch (error) {
