@@ -1,49 +1,21 @@
-# Run GitHub CI in FreeBSD ![Test](https://github.com/vmactions/freebsd-vm/workflows/Test/badge.svg)
+# Run GitHub CI in Debian GNU/Hurd ![Test](https://github.com/spk121/hurd-vm/workflows/Test/badge.svg)
 
 Powered by [AnyVM.org](https://anyvm.org)
 
-Use this action to run your CI in FreeBSD.
+Use this action to run your CI in Debian GNU/Hurd.
 
-The github workflow only supports Ubuntu, Windows and MacOS. But what if you need to use FreeBSD?
+The github workflow only supports Ubuntu, Windows and MacOS. But what if you need to use Debian GNU/Hurd?
 
 
 All the supported releases are here:
 
 
 
-| Release | x86_64  | aarch64(arm64) | riscv64  |
-|---------|---------|---------|-----------------|
-| 15.0    |  ✅     |  ✅    |           ✅    |
-| 15.0-xfce    |  ✅     |  ❌    |           ❌    |
-| 15.0-gnome    |  ✅     |  ❌    |           ❌    |
-| 15.0-kde6    |  ✅     |  ❌    |           ❌    |
-| 14.4    |  ✅     |  ✅    |           ✅    |
-| 14.3    |  ✅     |  ✅    |           ✅    |
-| 14.2    |  ✅     |  ✅    |           ✅    |
-| 14.1    |  ✅     |  ✅    |           ❌    |
-| 14.0    |  ✅     |  ❌    |           ❌    |
-| 13.5    |  ✅     |  ✅    |           ✅    |
-| 13.4    |  ✅     |  ✅    |           ✅    |
-| 13.3    |  ✅     |  ✅    |           ❌    |
-| 13.2    |  ✅     |  ❌    |           ❌    |
-| 12.4    |  ✅     |  ❌    |           ❌    |
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+| Release | x86_64  |
+|---------|---------|
+| trixie  |  ✅     |
+| bookworm |  ✅    |
+| sid     |  ✅     |
 
 
 
@@ -59,35 +31,30 @@ on: [push]
 jobs:
   test:
     runs-on: ubuntu-latest
-    name: A job to run test in FreeBSD
+    name: A job to run test in Debian GNU/Hurd
     env:
       MYTOKEN : ${{ secrets.MYTOKEN }}
       MYTOKEN2: "value2"
     steps:
     - uses: actions/checkout@v6
-    - name: Test in FreeBSD
+    - name: Test in Debian GNU/Hurd
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         envs: 'MYTOKEN MYTOKEN2'
         usesh: true
         prepare: |
-          
+          apt-get update
+          apt-get install -y curl
 
         run: |
-          #pkg install -y curl
-          pwd
+          uname -a
+          cat /etc/os-release
           ls -lah
           whoami
           env
-          freebsd-version
-          uname -a
-          #sysctl hw.model
-          sysctl hw.ncpu
-          sysctl hw.physmem
-          sysctl hw.usermem
-
-
+          nproc
+          free -h
 
 
 
@@ -95,7 +62,7 @@ jobs:
 ```
 
 
-The latest major version is: `v1`, which is the most recommended to use. (You can also use the latest full version: `v1.4.4`)  
+The latest major version is: `v1`, which is the most recommended to use. (You can also use the latest full version: `v1.0.0`)  
 
 
 If you are migrating from the previous `v0`, please change the `runs-on: ` to `runs-on: ubuntu-latest`
@@ -115,7 +82,7 @@ All the `GITHUB_*` as well as `CI=true` env variables are passed into the VM.
 
 So, you will have the same directory and same default env variables when you `run` the CI script.
 
-The default shell in FreeBSD(before 14.0) is `tcsh`, if you want to use `sh` to execute the `run` script, please set `usesh` to `true`.  https://docs.freebsd.org/en/articles/linux-users/#shells
+Debian GNU/Hurd uses `bash` as the default shell. Set `usesh: true` to use `sh` instead.
 
 
 
@@ -130,7 +97,7 @@ The code is shared from the host to the VM via `rsync` by default, you can choos
 
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         sync: sshfs  # or: nfs
 
@@ -152,7 +119,7 @@ When using `rsync` or `scp`,  you can define `copyback: false` to not copy files
 
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         sync: rsync
         copyback: false
@@ -166,15 +133,6 @@ When using `rsync` or `scp`,  you can define `copyback: false` to not copy files
 
 
 
-Becareful: 
-
-If you use `arch: riscv64`, you can only use `sync: scp` for now.
-
-
-
-
-
-
 ## 3. NAT from host runner to the VM
 
 You can add NAT port between the host and the VM.
@@ -183,7 +141,7 @@ You can add NAT port between the host and the VM.
 ...
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         nat: |
           "8080": "80"
@@ -202,7 +160,7 @@ The default memory of the VM is 6144MB, you can use `mem` option to set the memo
 ...
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         mem: 4096
 ...
@@ -216,7 +174,7 @@ The VM is using all the cpu cores of the host by default, you can use `cpu` opti
 ...
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         cpu: 3
 ...
@@ -225,40 +183,20 @@ The VM is using all the cpu cores of the host by default, you can use `cpu` opti
 
 ## 5. Select release
 
-It uses [the FreeBSD 15.0](conf/default.release.conf) by default, you can use `release` option to use another version of FreeBSD:
+It uses [the Debian GNU/Hurd trixie](conf/default.release.conf) by default, you can use `release` option to use another version:
 
 ```yaml
 ...
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
-        release: "15.0"
+        release: "trixie"
 ...
 ```
 
 
-## 6. Select architecture
-
-The vm is using x86_64(AMD64) by default, but you can use `arch` option to change the architecture:
-
-```yaml
-...
-    - name: Test
-      id: test
-      uses: vmactions/freebsd-vm@v1
-      with:
-        arch: aarch64
-...
-```
-
-When you run with `aarch64`, the host runner should still be the normal `x86_64` runner: `runs-on: ubuntu-latest`
-
-It's not recommended to use `ubuntu-24.04-arm` as runner, it's much more slower.
-
-
-
-## 7. Custom shell
+## 6. Custom shell
 
 Support custom shell:
 
@@ -268,17 +206,17 @@ Support custom shell:
     - uses: actions/checkout@v6
     - name: Start VM
       id: vm
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         sync: nfs
     - name: Custom shell step 1
-      shell: freebsd {0}
+      shell: hurd {0}
       run: |
         cd $GITHUB_WORKSPACE;
         pwd
         echo "this is step 1, running inside the VM"
     - name: Custom shell step 2
-      shell: freebsd {0}
+      shell: hurd {0}
       run: |
         cd $GITHUB_WORKSPACE;
         pwd
@@ -287,7 +225,7 @@ Support custom shell:
 ```
 
 
-## 8. Synchronize VM time
+## 7. Synchronize VM time
 
 If the time in VM is not correct, You can use `sync-time` option to synchronize the VM time with NTP:
 
@@ -295,14 +233,14 @@ If the time in VM is not correct, You can use `sync-time` option to synchronize 
 ...
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         sync-time: true
 ...
 ```
 
 
-## 9. Disable cache
+## 8. Disable cache
 
 By default, the action caches `apt` packages on the host and VM images/artifacts. You can use the `disableCache` option to disable this:
 
@@ -310,14 +248,14 @@ By default, the action caches `apt` packages on the host and VM images/artifacts
 ...
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         disable-cache: true
 ...
 ```
 
 
-## 10. Debug on error
+## 9. Debug on error
 
 If you want to debug the VM when the `prepare` or `run` step fails, you can set `debug-on-error: true`.
 
@@ -331,7 +269,7 @@ Then use it in the workflow:
 ...
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         debug-on-error: ${{ vars.DEBUG_ON_ERROR }}
 
@@ -344,7 +282,7 @@ You can also set the `vnc-password` parameter to set a custom password to protec
 ...
     - name: Test
       id: test
-      uses: vmactions/freebsd-vm@v1
+      uses: spk121/hurd-vm@v1
       with:
         debug-on-error: ${{ vars.DEBUG_ON_ERROR }}
         vnc-password: ${{ secrets.VNC_PASSWORD }}
@@ -361,27 +299,7 @@ See more: [debug on error](https://github.com/vmactions/.github/wiki/debug%E2%80
 
 # Under the hood
 
-We use Qemu to run the FreeBSD VM.
+We use Qemu to run the Debian GNU/Hurd VM.
 
-
-
-
-# Upcoming features:
-
-1. Support other architectures, eg: sparc64 or powerpc64.
-2. Support MacOS runner and Windows runner.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Debian GNU/Hurd is a port of the Debian GNU system to the GNU Hurd kernel (based on GNU Mach).
+More information: https://www.debian.org/ports/hurd/

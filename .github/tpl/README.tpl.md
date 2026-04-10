@@ -184,27 +184,7 @@ It uses [the {{VM_NAME}} {{DEFAULT_RELEASE}}](conf/default.release.conf) by defa
 ```
 
 
-## 6. Select architecture
-
-The vm is using x86_64(AMD64) by default, but you can use `arch` option to change the architecture:
-
-```yaml
-...
-    - name: Test
-      id: test
-      uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
-      with:
-        arch: aarch64
-...
-```
-
-When you run with `aarch64`, the host runner should still be the normal `x86_64` runner: `runs-on: {{VM_RUNS_ON}}`
-
-It's not recommended to use `ubuntu-24.04-arm` as runner, it's much more slower.
-
-{{VM_ARCH_COMMENTS}}
-
-## 7. Custom shell
+## 6. Custom shell
 
 Support custom shell:
 
@@ -233,7 +213,7 @@ Support custom shell:
 ```
 
 
-## 8. Synchronize VM time
+## 7. Synchronize VM time
 
 If the time in VM is not correct, You can use `sync-time` option to synchronize the VM time with NTP:
 
@@ -248,7 +228,7 @@ If the time in VM is not correct, You can use `sync-time` option to synchronize 
 ```
 
 
-## 9. Disable cache
+## 8. Disable cache
 
 By default, the action caches `apt` packages on the host and VM images/artifacts. You can use the `disableCache` option to disable this:
 
@@ -263,7 +243,7 @@ By default, the action caches `apt` packages on the host and VM images/artifacts
 ```
 
 
-## 10. Debug on error
+## 9. Debug on error
 
 If you want to debug the VM when the `prepare` or `run` step fails, you can set `debug-on-error: true`.
 
@@ -309,25 +289,5 @@ See more: [debug on error](https://github.com/vmactions/.github/wiki/debug%E2%80
 
 We use Qemu to run the {{VM_NAME}} VM.
 
-
-
-
-# Upcoming features:
-
-1. Support other architectures, eg: sparc64 or powerpc64.
-2. Support MacOS runner and Windows runner.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Debian GNU/Hurd is a port of the Debian GNU system to the GNU Hurd kernel (based on GNU Mach).
+More information: https://www.debian.org/ports/hurd/
