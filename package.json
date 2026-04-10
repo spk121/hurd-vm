@@ -1,6 +1,6 @@
 {
   "name": "vmactions-hurd",
-  "version": "",
+  "version": "1.0.0",
   "description": "GitHub actions for Debian GNU/Hurd",
   "type": "module",
   "main": "index.js",

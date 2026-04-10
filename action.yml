@@ -14,9 +14,6 @@ inputs:
   release:
     description: 'The release version of Debian Hurd vm'
     required: false
-  arch:
-    description: 'The cpu architecture of Debian Hurd vm'
-    required: false
   envs:
     description: 'The envs to pass into Hurd vm'
     required: false

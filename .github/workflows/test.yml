@@ -60,7 +60,7 @@ jobs:
     - name: Test in Debian GNU/Hurd
       if: ${{ steps.check.outputs.run == 'true' }}
       id: test
-      uses: spk121/hurd-vm@f4762c2c7d95eaf938a812392af526cefe0369a7
+      uses: ${{ github.repository }}@f4762c2c7d95eaf938a812392af526cefe0369a7
       with:
         envs: 'DEBUG MYTOKEN MYTOKEN2'
         prepare: |
@@ -152,7 +152,7 @@ jobs:
     - name: Test in Debian GNU/Hurd
       if: ${{ steps.check.outputs.run == 'true' }}
       id: test
-      uses: spk121/hurd-vm@f4762c2c7d95eaf938a812392af526cefe0369a7
+      uses: ${{ github.repository }}@f4762c2c7d95eaf938a812392af526cefe0369a7
       with:
         envs: 'DEBUG MYTOKEN MYTOKEN2'
         prepare: |
@@ -247,7 +247,7 @@ jobs:
     - name: Test in Debian GNU/Hurd
       if: ${{ steps.check.outputs.run == 'true' }}
       id: test
-      uses: spk121/hurd-vm@f4762c2c7d95eaf938a812392af526cefe0369a7
+      uses: ${{ github.repository }}@f4762c2c7d95eaf938a812392af526cefe0369a7
       with:
         envs: 'DEBUG MYTOKEN MYTOKEN2'
         prepare: |
@@ -332,7 +332,7 @@ jobs:
     - name: Test in Debian GNU/Hurd
       if: ${{ steps.check.outputs.run == 'true' }}
       id: test
-      uses: spk121/hurd-vm@f4762c2c7d95eaf938a812392af526cefe0369a7
+      uses: ${{ github.repository }}@f4762c2c7d95eaf938a812392af526cefe0369a7
       with:
         envs: 'MYTOKEN MYTOKEN2'
         prepare: |
@@ -393,7 +393,7 @@ jobs:
     - name: Test in Debian GNU/Hurd
       id: testerr
       continue-on-error: true 
-      uses: spk121/hurd-vm@f4762c2c7d95eaf938a812392af526cefe0369a7
+      uses: ${{ github.repository }}@f4762c2c7d95eaf938a812392af526cefe0369a7
       with:
         usesh: true
         debug: true
@@ -421,7 +421,7 @@ jobs:
     - name: Test in Debian GNU/Hurd
       id: testpass
       continue-on-error: true 
-      uses: spk121/hurd-vm@f4762c2c7d95eaf938a812392af526cefe0369a7
+      uses: ${{ github.repository }}@f4762c2c7d95eaf938a812392af526cefe0369a7
       with:
         usesh: true
         debug: true

@@ -49,7 +49,7 @@ jobs:
 
         run: |
           uname -a
-          lsb_release -a
+          cat /etc/os-release
           ls -lah
           whoami
           env
