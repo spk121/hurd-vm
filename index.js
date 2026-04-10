@@ -653,11 +653,10 @@ async function main() {
       }
     }
 
-    // sshfs/nfs not yet implemented for Hurd — fall back to rsync
+    // sshfs and nfs are not supported on Hurd
     let effectiveSync = sync;
     if (sync === 'sshfs' || sync === 'nfs') {
-      core.warning(`Sync mode '${sync}' is not yet implemented for Hurd; falling back to rsync.`);
-      effectiveSync = 'rsync';
+      throw new Error(`Sync mode '${sync}' is not supported on Debian GNU/Hurd. Use 'rsync', 'scp', or 'no' instead.`);
     }
 
     let isScpOrRsync = false;
@@ -698,7 +697,16 @@ async function main() {
       core.endGroup();
     }
 
-    // 15. Run prepare
+    // 15. Run onInitialized hook
+    const onInitializedHook = path.join(__dirname, 'hooks', 'onInitialized.sh');
+    if (fs.existsSync(onInitializedHook)) {
+      core.startGroup(`Running onInitialized hook`);
+      const hookContent = fs.readFileSync(onInitializedHook, 'utf8');
+      await execSSH(hookContent, sshConfig, false, debug !== 'true');
+      core.endGroup();
+    }
+
+    // 16. Run prepare
     try {
       core.startGroup("Run 'prepare' in VM");
       if (prepare) {

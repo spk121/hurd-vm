@@ -1,7 +1,10 @@
+#!/usr/bin/env sh
 
-#runs in the vm After all the files are initialized
+# Runs in the VM after all files have been synced and the workdir symlink is set up.
 
-#tree .
-#tree $HOME/work/
+echo "==> onInitialized: workspace contents"
+ls -lah "$GITHUB_WORKSPACE"
 
+echo "==> onInitialized: disk usage"
+df -h
 

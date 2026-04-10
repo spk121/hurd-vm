@@ -75,7 +75,7 @@ So, you will have the same directory and same default env variables when you `ru
 
 ## 2. Share code
 
-The code is shared from the host to the VM via `rsync` by default, you can choose to use `sshfs` or `nfs` or `scp` to share code instead.
+The code is shared from the host to the VM via `rsync` by default. You can also use `scp`, or set `sync: no` to skip syncing entirely. (`sshfs` and `nfs` are not supported on Debian GNU/Hurd.)
 
 
 ```yaml
@@ -86,7 +86,7 @@ The code is shared from the host to the VM via `rsync` by default, you can choos
       id: test
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
-        sync: sshfs  # or: nfs
+        sync: scp
 
 
 ...
