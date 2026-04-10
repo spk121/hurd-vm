@@ -1,4 +1,3 @@
-
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as cache from '@actions/cache';
@@ -104,6 +103,7 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
   const osName = sshConfig.osName;
   const work = sshConfig.work;
   const vmwork = sshConfig.vmwork;
+  const userEnvNames = sshConfig.userEnvNames || [];
 
   const args = [
     "-o", "StrictHostKeyChecking=no",
@@ -111,11 +111,19 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
   ];
 
   let envExports = "";
-  // For VMs where the work path differs from the host (haiku, hurd), rewrite GITHUB_* paths
-  if ((osName === 'haiku' || osName === 'hurd') && work && vmwork && work !== vmwork) {
+  // For Hurd, the work path differs from the host — rewrite GITHUB_* paths
+  if (work && vmwork && work !== vmwork) {
     const workRegex = new RegExp(work.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
     for (const key of Object.keys(process.env)) {
-      if (key.startsWith('GITHUB_') || key === 'CI' || key === 'MYTOKEN' || key === 'MYTOKEN2') {
+      if (key.startsWith('GITHUB_') || key === 'CI') {
+        const val = process.env[key] || "";
+        const newVal = val.replace(workRegex, vmwork);
+        envExports += `export ${key}="${newVal}"\n`;
+      }
+    }
+    // Also export user-specified env vars (with path rewriting)
+    for (const key of userEnvNames) {
+      if (key && !key.startsWith('GITHUB_') && key !== 'CI' && process.env[key] !== undefined) {
         const val = process.env[key] || "";
         const newVal = val.replace(workRegex, vmwork);
         envExports += `export ${key}="${newVal}"\n`;
@@ -180,7 +188,7 @@ async function handleErrorWithDebug(sshHost, vncLink, debug) {
   }
 }
 
-async function install(osName, sync, debug) {
+async function install(sync, debug) {
   const start = Date.now();
   core.info("Installing dependencies...");
   if (process.platform === 'linux') {
@@ -220,9 +228,9 @@ async function install(osName, sync, debug) {
 }
 
 
-async function scpToVM(sshHost, work, vmwork, osName, debug) {
+async function scpToVM(sshHost, work, vmwork, debug) {
   core.info(`==> Ensuring ${vmwork} exists...`);
-  await execSSH(`mkdir -p ${vmwork}`, { host: sshHost, osName, work, vmwork });
+  await execSSH(`mkdir -p ${vmwork}`, { host: sshHost, osName: 'hurd', work, vmwork });
 
   core.info("==> Uploading files via scp (excluding _actions and _PipelineMapping)...");
 
@@ -313,11 +321,10 @@ async function prepareHurdImage(imagePath, sshKeyPub, debug) {
   await exec.exec("sudo", ["chown", "-R", "0:0", "/mnt/hurd-root/root/.ssh"]);
 
   // Ensure sshd allows root login with pubkey authentication.
-  // Append directives to override any conflicting defaults.
   const sshdConfig = "/mnt/hurd-root/etc/ssh/sshd_config";
   if (fs.existsSync(sshdConfig)) {
     await exec.exec("sudo", ["sh", "-c",
-      `printf '\\n# Added by hurd-vm action\\nPermitRootLogin yes\\nPubkeyAuthentication yes\\nAuthorizedKeysFile .ssh/authorized_keys\\nAcceptEnv CI MYTOKEN MYTOKEN2\\n' >> ${sshdConfig}`
+      `printf '\\n# Added by hurd-vm action\\nPermitRootLogin yes\\nPubkeyAuthentication yes\\nAuthorizedKeysFile .ssh/authorized_keys\\n' >> ${sshdConfig}`
     ]);
     if (debug === 'true') {
       await exec.exec("sudo", ["tail", "-10", sshdConfig]);
@@ -339,7 +346,6 @@ function parseNatPorts(nat) {
   if (!nat) return [];
   const result = [];
   for (const line of nat.split('\n')) {
-    // Remove quotes and whitespace; handle "udp:PORT": "PORT" format
     const trimmed = line.trim().replace(/['"]/g, '').replace(/\s+/g, '');
     if (!trimmed) continue;
     const isUdp = trimmed.startsWith('udp:');
@@ -356,7 +362,6 @@ function parseNatPorts(nat) {
 async function startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList, debug) {
   core.info(`Starting QEMU: ${qemuSystem} with image ${imagePath}`);
 
-  // Build the -net user hostfwd list. Always include the primary SSH port.
   const hostfwds = [
     `hostfwd=tcp:127.0.0.1:${sshPort}-:22`,
     ...natPortsList.map(({ hostPort, guestPort, proto }) =>
@@ -376,7 +381,6 @@ async function startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList,
     "-pidfile", pidFile,
   ];
 
-  // Use KVM acceleration when available (much faster)
   if (fs.existsSync('/dev/kvm')) {
     args.unshift("-enable-kvm");
   }
@@ -389,7 +393,7 @@ async function startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList,
   core.info(`QEMU started. PID file: ${pidFile}`);
 }
 
-// Wait until SSH is accepting connections (polls every 10 seconds)
+// Wait until SSH is accepting connections
 async function waitForSSH(sshHost, timeoutSec, debug) {
   core.info(`Waiting for SSH on ${sshHost} (timeout: ${timeoutSec}s)...`);
   const start = Date.now();
@@ -421,7 +425,6 @@ async function main() {
   try {
     // 1. Inputs
     const debug = core.getInput("debug");
-    const releaseInput = core.getInput("release").toLowerCase();
     const inputOsName = core.getInput("osname").toLowerCase();
     const mem = core.getInput("mem") || '2048';
     const cpu = core.getInput("cpu");
@@ -435,34 +438,29 @@ async function main() {
     const debugOnError = core.getInput("debug-on-error").toLowerCase() === 'true';
 
     const work = path.join(process.env["HOME"], "work");
-    // Inside the Hurd VM, we connect as root whose home is /root
     const vmwork = '/root/work';
+    const osName = inputOsName;
+
+    // Parse user env names for path rewriting
+    const userEnvNames = envs ? envs.split(/\s+/).filter(Boolean) : [];
 
     // 2. Load Config
-    let env = {};
-    env = parseConfig(path.join(__dirname, 'conf/default.release.conf'), env);
-
-    const release = releaseInput || env['DEFAULT_RELEASE'];
-
-    const confPath = path.join(__dirname, `conf/${release}.conf`);
+    const confPath = path.join(__dirname, 'conf/default.conf');
     if (!fs.existsSync(confPath)) {
-      throw new Error(`Config not found for release '${release}': ${confPath}`);
+      throw new Error(`Config not found: ${confPath}`);
     }
-    env = parseConfig(confPath, env);
+    const env = parseConfig(confPath);
 
     const imageUrl   = env['IMAGE_URL'];
     const qemuSystem = env['QEMU_SYSTEM'] || 'qemu-system-x86_64';
     const sshUser    = env['SSH_USER']    || 'root';
     const sshPort    = env['SSH_PORT']    || '2222';
-    const imageDate  = env['IMAGE_DATE']  || 'default';
-    const osName = inputOsName;
 
     if (!imageUrl) {
       throw new Error(`IMAGE_URL not defined in ${confPath}`);
     }
 
     core.startGroup("Configuration");
-    core.info(`Release:     ${release}`);
     core.info(`OS Name:     ${osName}`);
     core.info(`QEMU System: ${qemuSystem}`);
     core.info(`Image URL:   ${imageUrl}`);
@@ -483,12 +481,16 @@ async function main() {
 
     // 4. Install dependencies
     core.startGroup("Installing dependencies");
-    await install(osName, sync, debug);
+    await install(sync, debug);
     core.endGroup();
 
-    // 5. Cache: try to restore the compressed disk image archive.
-    // Use RUNNER_TEMP so the path is stable across action version bumps.
-    const cacheKey = `hurd-image-${release}-${imageDate}-v1`;
+    // 5. Cache
+    // We use a date-based key derived from the current week so the image
+    // refreshes weekly but cache hits within the same week avoid re-downloading.
+    const now = new Date();
+    const weekKey = `${now.getFullYear()}-W${String(Math.ceil(((now - new Date(now.getFullYear(),0,1)) / 86400000 + 1) / 7)).padStart(2,'0')}`;
+    const cacheKey = `hurd-image-latest-amd64-${weekKey}`;
+
     const dataDir = core.getInput("data-dir")
       ? expandVars(core.getInput("data-dir"), process.env)
       : path.join(process.env['RUNNER_TEMP'] || os.tmpdir(), 'hurd-vm-data');
@@ -496,18 +498,17 @@ async function main() {
       fs.mkdirSync(dataDir, { recursive: true });
     }
 
-    const archiveFileName = `debian-hurd-${release}.img.tar.gz`;
+    const archiveFileName = 'debian-hurd.img.tar.gz';
     const archivePath = path.join(dataDir, archiveFileName);
 
     core.startGroup("Cache");
     let cacheHit = false;
     if (!disableCache) {
       try {
-        // restoreKeys: first try exact match, then any image for this release
         const restoredKey = await cache.restoreCache(
           [archivePath],
           cacheKey,
-          [`hurd-image-${release}-`]
+          ['hurd-image-latest-amd64-']
         );
         if (restoredKey && fs.existsSync(archivePath)) {
           cacheHit = true;
@@ -524,8 +525,6 @@ async function main() {
     core.endGroup();
 
     // 6. Download image if not cached, then save to cache before starting the VM.
-    // Saving before VM start ensures the download is cached even if the VM
-    // fails to boot — otherwise process.exit(1) kills any background upload.
     if (!cacheHit || !fs.existsSync(archivePath)) {
       core.startGroup("Downloading Hurd disk image");
       await downloadFile(imageUrl, archivePath);
@@ -549,11 +548,10 @@ async function main() {
 
     // 7. Extract the image archive
     core.startGroup("Extracting disk image");
-    const extractDir = path.join(dataDir, `hurd-extract-${release}`);
+    const extractDir = path.join(dataDir, 'hurd-extract');
     if (!fs.existsSync(extractDir)) {
       fs.mkdirSync(extractDir, { recursive: true });
     }
-    // Remove any stale extracted image to start fresh
     const existingImgs = fs.readdirSync(extractDir).filter(f => f.endsWith('.img'));
     for (const f of existingImgs) {
       fs.unlinkSync(path.join(extractDir, f));
@@ -585,10 +583,8 @@ async function main() {
 
     // 11. Wait for SSH
     core.startGroup("Waiting for SSH");
-    // Use a named SSH host alias so ssh/scp/rsync commands use the right settings
     const sshHostAlias = osName || 'hurd';
 
-    // Write SSH config before waiting (so ssh uses the right key/port)
     const sshConfigPath = path.join(sshDir, "config");
     let sshConfigEntry = `Host ${sshHostAlias}\n`;
     sshConfigEntry += `  HostName 127.0.0.1\n`;
@@ -598,9 +594,6 @@ async function main() {
     sshConfigEntry += `  StrictHostKeyChecking no\n`;
     sshConfigEntry += `  UserKnownHostsFile /dev/null\n`;
 
-    // Add SendEnv for user-specified env vars only.
-    // GITHUB_* vars are NOT sent via SendEnv because they contain the host path
-    // (/home/runner/...) which doesn't exist inside the VM; execSSH rewrites them.
     let sendEnvs = [];
     if (envs) sendEnvs.push(envs);
     sendEnvs.push("CI");
@@ -608,8 +601,6 @@ async function main() {
       sshConfigEntry += `  SendEnv ${sendEnvs.join(" ")}\n`;
     }
     sshConfigEntry += "\n";
-
-    // Also allow all other hosts with no strict checking
     sshConfigEntry += "Host *\n  StrictHostKeyChecking no\n";
 
     fs.writeFileSync(sshConfigPath, sshConfigEntry);
@@ -627,7 +618,8 @@ async function main() {
       host: sshHostAlias,
       osName: osName,
       work: work,
-      vmwork: vmwork
+      vmwork: vmwork,
+      userEnvNames: userEnvNames
     };
 
     // 12. Register a custom shell wrapper so users can write: shell: hurd {0}
@@ -661,8 +653,7 @@ async function main() {
       }
     }
 
-    // sshfs/nfs require kernel-level mounting which depends on anyvm infrastructure.
-    // For Hurd we fall back to rsync for those modes and still do copyback.
+    // sshfs/nfs not yet implemented for Hurd — fall back to rsync
     let effectiveSync = sync;
     if (sync === 'sshfs' || sync === 'nfs') {
       core.warning(`Sync mode '${sync}' is not yet implemented for Hurd; falling back to rsync.`);
@@ -680,7 +671,7 @@ async function main() {
       await execSSH(`mkdir -p ${vmwork}`, { ...sshConfig });
       if (effectiveSync === 'scp') {
         core.info("Syncing via SCP");
-        await scpToVM(sshHostAlias, work, vmwork, osName, debug);
+        await scpToVM(sshHostAlias, work, vmwork, debug);
       } else {
         core.info("Syncing via Rsync");
         const rsyncArgs = [
@@ -775,6 +766,11 @@ async function main() {
         core.endGroup();
       }
     }
+
+    // Save the PID file path for cleanup.js
+    const pidFile = path.join(os.tmpdir(), 'hurd-vm.pid');
+    core.saveState('pidFile', pidFile);
+    core.saveState('sshKeyPath', sshKeyPath);
 
   } catch (error) {
     core.setFailed(error.message);

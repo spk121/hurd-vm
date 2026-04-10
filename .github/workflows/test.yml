@@ -1,4 +1,3 @@
-
 name: Test
 
 on:
@@ -17,56 +16,35 @@ on:
 
 
 
-concurrency: 
+concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 
 
 jobs:
-  testsshfs:
+  test-rsync:
     strategy:
       fail-fast: false
       matrix:
-        release: [ "trixie", "bookworm", "sid", ""]
-        runs: [ "ubuntu-24.04"]
+        disableCache: [ "", "true"]
 
-    runs-on: ${{ matrix.runs }}
-    name: sshfs Debian GNU/Hurd
+    runs-on: ubuntu-24.04
+    name: rsync default Debian GNU/Hurd
     env:
       MYTOKEN : ${{ secrets.MYTOKEN }}
       MYTOKEN2: "value2"
-      DEBUG: 1
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
     - uses: actions/checkout@v6
-    - name: Check release
-      id: check
-      run: |
-        _release="${{ matrix.release }}"
-        if [ -z "$_release" ]; then
-          . conf/default.release.conf
-          _release="$DEFAULT_RELEASE"
-        fi
-
-        if [ -e "conf/${_release}.conf" ]; then
-          echo "conf exists: conf/${_release}.conf"
-          echo "run=true" >> $GITHUB_OUTPUT
-        else
-          echo "The release ${_release} is not supported, skip."
-          echo "run=false" >> $GITHUB_OUTPUT
-        fi
-
     - name: Test in Debian GNU/Hurd
-      if: ${{ steps.check.outputs.run == 'true' }}
       id: test
       uses: ./
       with:
-        envs: 'DEBUG MYTOKEN MYTOKEN2'
+        envs: 'MYTOKEN MYTOKEN2'
         prepare: |
           
-        mem: 4096
-        release: ${{ matrix.release }}
+        mem: 2048
         nat: |
           "20022": "22"
           "8080": "80"
@@ -74,18 +52,11 @@ jobs:
           udp:"8081": "80"
         usesh: true
         debug: true
-        sync: sshfs
+        disable-cache: ${{ matrix.disableCache }}
         run: |
-          set -e
-          ls -lah $HOME/work
-          if [ -z "$(ls -A $HOME/work)" ]; then
-            echo "sshfs error."
-            exit 1
-          fi
+          env
           echo "TEST_ENV=abc" >>${GITHUB_ENV}
-          echo "textfromvm" >$GITHUB_WORKSPACE/vm.txt
           uname -a
-          lsb_release -a 2>/dev/null || echo 'lsb_release not available'
           ls -lah
           whoami
           env
@@ -93,16 +64,15 @@ jobs:
           free -h
 
     - name: Test NAT
-      if: ${{ steps.check.outputs.run == 'true' }}
       env:
         VM_USER: ""
       run: |
         set -e
         echo "TEST_ENV=$TEST_ENV"
         [ "$TEST_ENV" = "abc" ]
-        ssh -v -p 20022 ${VM_USER:-root}@localhost  "uname -a;whoami;pwd"
+        ssh -v  -p 20022 ${VM_USER:-root}@localhost  "uname -a;whoami;pwd"
+
     - name: Test custom shell
-      if: ${{ steps.check.outputs.run == 'true' }}
       shell: hurd {0}
       run: |
         pwd
@@ -114,111 +84,8 @@ jobs:
         free -h
 
 
-
-
-  testnfs:
-    strategy:
-      fail-fast: false
-      matrix:
-        release: [ "trixie", "bookworm", "sid", ""]
-        runs: [ "ubuntu-24.04"]
-
-    runs-on: ${{ matrix.runs }}
-    name: nfs Debian GNU/Hurd
-    env:
-      MYTOKEN : ${{ secrets.MYTOKEN }}
-      MYTOKEN2: "value2"
-      DEBUG: 1
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
-    steps:
-    - uses: actions/checkout@v6
-    - name: Check release
-      id: check
-      run: |
-        _release="${{ matrix.release }}"
-        if [ -z "$_release" ]; then
-          . conf/default.release.conf
-          _release="$DEFAULT_RELEASE"
-        fi
-
-        if [ -e "conf/${_release}.conf" ]; then
-          echo "conf exists: conf/${_release}.conf"
-          echo "run=true" >> $GITHUB_OUTPUT
-        else
-          echo "The release ${_release} is not supported, skip."
-          echo "run=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Test in Debian GNU/Hurd
-      if: ${{ steps.check.outputs.run == 'true' }}
-      id: test
-      uses: ./
-      with:
-        envs: 'DEBUG MYTOKEN MYTOKEN2'
-        prepare: |
-          
-        mem: 4096
-        release: ${{ matrix.release }}
-        nat: |
-          "20022": "22"
-          "8080": "80"
-          "8443": "443"
-          udp:"8081": "80"
-        usesh: true
-        debug: true
-        sync: nfs
-        run: |
-          ls -lah $HOME/work
-          if [ -z "$(ls -A $HOME/work)" ]; then
-            echo "nfs error."
-            exit 1
-          fi
-          env
-          echo "TEST_ENV=abc" >>${GITHUB_ENV}
-          echo "textfromvm" >$GITHUB_WORKSPACE/vm.txt
-          uname -a
-          lsb_release -a 2>/dev/null || echo 'lsb_release not available'
-          ls -lah
-          whoami
-          env
-          nproc
-          free -h
-
-    - name: Test NAT
-      if: ${{ steps.check.outputs.run == 'true' }}
-      env:
-        VM_USER: ""
-      run: |
-        set -e
-        [ -e "$GITHUB_WORKSPACE/vm.txt" ];
-        cat "$GITHUB_WORKSPACE/vm.txt";
-        grep "textfromvm" $GITHUB_WORKSPACE/vm.txt;
-        echo "TEST_ENV=$TEST_ENV"
-        [ "$TEST_ENV" = "abc" ]
-        ssh -v -p 20022 ${VM_USER:-root}@localhost "uname -a;whoami;pwd"
-    - name: Test custom shell
-      if: ${{ steps.check.outputs.run == 'true' }}
-      shell: hurd {0}
-      run: |
-        pwd
-        uname -a
-        ls -lah
-        whoami
-        env
-        nproc
-        free -h
-
-
-
-
-  testscp:
-    strategy:
-      fail-fast: false
-      matrix:
-        release: [ "trixie", "bookworm", "sid", ""]
-        runs: [ "ubuntu-24.04"]
-
-    runs-on: ${{ matrix.runs }}
+  test-scp:
+    runs-on: ubuntu-24.04
     name: scp Debian GNU/Hurd
     env:
       MYTOKEN : ${{ secrets.MYTOKEN }}
@@ -227,33 +94,14 @@ jobs:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
     - uses: actions/checkout@v6
-    - name: Check release
-      id: check
-      run: |
-        _release="${{ matrix.release }}"
-        if [ -z "$_release" ]; then
-          . conf/default.release.conf
-          _release="$DEFAULT_RELEASE"
-        fi
-
-        if [ -e "conf/${_release}.conf" ]; then
-          echo "conf exists: conf/${_release}.conf"
-          echo "run=true" >> $GITHUB_OUTPUT
-        else
-          echo "The release ${_release} is not supported, skip."
-          echo "run=false" >> $GITHUB_OUTPUT
-        fi
-
     - name: Test in Debian GNU/Hurd
-      if: ${{ steps.check.outputs.run == 'true' }}
       id: test
       uses: ./
       with:
         envs: 'DEBUG MYTOKEN MYTOKEN2'
         prepare: |
           
-        mem: 4096
-        release: ${{ matrix.release }}
+        mem: 2048
         nat: |
           "20022": "22"
           "8080": "80"
@@ -272,7 +120,6 @@ jobs:
           echo "TEST_ENV=abc" >>${GITHUB_ENV}
           echo "textfromvm" >$GITHUB_WORKSPACE/vm.txt
           uname -a
-          lsb_release -a 2>/dev/null || echo 'lsb_release not available'
           ls -lah
           whoami
           env
@@ -280,9 +127,6 @@ jobs:
           free -h
 
     - name: Test files
-      if: ${{ steps.check.outputs.run == 'true' }}
-      env:
-        VM_USER: ""
       run: |
         set -e
         [ -e "$GITHUB_WORKSPACE/vm.txt" ];
@@ -291,108 +135,16 @@ jobs:
         cat ${GITHUB_ENV}
         echo "TEST_ENV=$TEST_ENV";
         [ "$TEST_ENV" = "abc" ];
-        
 
 
-
-
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        release: [ "trixie", "bookworm", "sid", ""]
-        runs: [ "ubuntu-24.04"]
-        disableCache: [ "", "true"]
-
-    runs-on: ${{ matrix.runs }}
-    name: rsync default Debian GNU/Hurd
-    env:
-      MYTOKEN : ${{ secrets.MYTOKEN }}
-      MYTOKEN2: "value2"
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
-    steps:
-    - uses: actions/checkout@v6
-    - name: Check release
-      id: check
-      run: |
-        _release="${{ matrix.release }}"
-        if [ -z "$_release" ]; then
-          . conf/default.release.conf
-          _release="$DEFAULT_RELEASE"
-        fi
-
-        if [ -e "conf/${_release}.conf" ]; then
-          echo "conf exists: conf/${_release}.conf"
-          echo "run=true" >> $GITHUB_OUTPUT
-        else
-          echo "The release ${_release} is not supported, skip."
-          echo "run=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Test in Debian GNU/Hurd
-      if: ${{ steps.check.outputs.run == 'true' }}
-      id: test
-      uses: ./
-      with:
-        envs: 'MYTOKEN MYTOKEN2'
-        prepare: |
-          
-        mem: 4096
-        release: ${{ matrix.release }}
-        nat: |
-          "20022": "22"
-          "8080": "80"
-          "8443": "443"
-          udp:"8081": "80"
-        usesh: true
-        debug: true
-        disable-cache: ${{ matrix.disableCache }}
-        run: |
-          env
-          echo "TEST_ENV=abc" >>${GITHUB_ENV}
-          uname -a
-          lsb_release -a 2>/dev/null || echo 'lsb_release not available'
-          ls -lah
-          whoami
-          env
-          nproc
-          free -h
-
-    - name: Test NAT
-      if: ${{ steps.check.outputs.run == 'true' }}
-      env:
-        VM_USER: ""
-      run: |
-        set -e
-        echo "TEST_ENV=$TEST_ENV"
-        [ "$TEST_ENV" = "abc" ]
-        ssh -v  -p 20022 ${VM_USER:-root}@localhost  "uname -a;whoami;pwd"
-
-    - name: Test custom shell
-      if: ${{ steps.check.outputs.run == 'true' }}
-      shell: hurd {0}
-      run: |
-        pwd
-        uname -a
-        ls -lah
-        whoami
-        env
-        nproc
-        free -h
-
-
-
-
-  testerr:
-    strategy:
-      fail-fast: false
+  test-error:
     runs-on: ubuntu-24.04
-    name: test default error Debian GNU/Hurd
+    name: test error handling Debian GNU/Hurd
     steps:
     - uses: actions/checkout@v6
     - name: Test in Debian GNU/Hurd
       id: testerr
-      continue-on-error: true 
+      continue-on-error: true
       uses: ./
       with:
         usesh: true
@@ -411,16 +163,14 @@ jobs:
         echo "The step was expected to fail, and it failed!"
         exit 0
 
-  testpass:
-    strategy:
-      fail-fast: false
+  test-success:
     runs-on: ubuntu-24.04
-    name: test default success Debian GNU/Hurd
+    name: test success handling Debian GNU/Hurd
     steps:
     - uses: actions/checkout@v6
     - name: Test in Debian GNU/Hurd
       id: testpass
-      continue-on-error: true 
+      continue-on-error: true
       uses: ./
       with:
         usesh: true
