@@ -28,7 +28,6 @@ jobs:
       uses: spk121/hurd-vm@v1
       with:
         envs: 'MYTOKEN MYTOKEN2'
-        usesh: true
         prepare: |
           apt-get update
           apt-get install -y curl
@@ -53,8 +52,6 @@ The working dir for `run` in the VM is the same as in the host machine.
 All the source code tree in the host machine are mounted into the VM.
 
 All the `GITHUB_*` as well as `CI=true` env variables are passed into the VM.
-
-Debian GNU/Hurd uses `bash` as the default shell. Set `usesh: true` to use `sh` instead.
 
 
 ## 2. Share code

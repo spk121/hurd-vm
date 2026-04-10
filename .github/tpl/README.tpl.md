@@ -36,7 +36,6 @@ jobs:
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
         envs: 'MYTOKEN MYTOKEN2'
-        usesh: true
         prepare: |
           {{VM_PREPARE}}
 

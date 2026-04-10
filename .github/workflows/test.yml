@@ -50,7 +50,6 @@ jobs:
           "8080": "80"
           "8443": "443"
           udp:"8081": "80"
-        usesh: true
         debug: true
         disable-cache: ${{ matrix.disableCache }}
         run: |
@@ -107,7 +106,6 @@ jobs:
           "8080": "80"
           "8443": "443"
           udp:"8081": "80"
-        usesh: true
         debug: true
         sync: scp
         run: |
@@ -147,7 +145,6 @@ jobs:
       continue-on-error: true
       uses: ./
       with:
-        usesh: true
         debug: true
         run: |
           echo "this is an error"
@@ -173,7 +170,6 @@ jobs:
       continue-on-error: true
       uses: ./
       with:
-        usesh: true
         debug: true
         run: |
           echo "this is a normal command"
