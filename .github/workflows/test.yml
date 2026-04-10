@@ -24,11 +24,6 @@ concurrency:
 
 jobs:
   test-rsync:
-    strategy:
-      fail-fast: false
-      matrix:
-        disableCache: [ "", "true"]
-
     runs-on: ubuntu-24.04
     name: rsync default Debian GNU/Hurd
     env:
@@ -51,7 +46,6 @@ jobs:
           "8443": "443"
           udp:"8081": "80"
         debug: true
-        disable-cache: ${{ matrix.disableCache }}
         run: |
           env
           echo "TEST_ENV=abc" >>${GITHUB_ENV}
@@ -84,6 +78,7 @@ jobs:
 
 
   test-scp:
+    needs: test-rsync
     runs-on: ubuntu-24.04
     name: scp Debian GNU/Hurd
     env:
@@ -136,6 +131,7 @@ jobs:
 
 
   test-error:
+    needs: test-rsync
     runs-on: ubuntu-24.04
     name: test error handling Debian GNU/Hurd
     steps:
@@ -161,6 +157,7 @@ jobs:
         exit 0
 
   test-success:
+    needs: test-rsync
     runs-on: ubuntu-24.04
     name: test success handling Debian GNU/Hurd
     steps:
