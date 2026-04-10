@@ -278,7 +278,7 @@ async function prepareHurdImage(imagePath, sshKeyPub, debug) {
   await new Promise(r => setTimeout(r, 1000));
 
   // Connect the image to the first available NBD device
-  await exec.exec("sudo", ["qemu-nbd", "--connect=/dev/nbd0", imagePath]);
+  await exec.exec("sudo", ["qemu-nbd", "--format=raw", "--connect=/dev/nbd0", imagePath]);
 
   // Give the kernel time to read the partition table
   await new Promise(r => setTimeout(r, 2000));
@@ -373,7 +373,7 @@ async function startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList,
 
   const args = [
     "-m", `${mem}`,
-    "-drive", `file=${imagePath},cache=writeback`,
+    "-drive", `file=${imagePath},format=raw,cache=writeback`,
     "-net", `user,${hostfwds}`,
     "-net", "nic,model=e1000",
     "-nographic",
