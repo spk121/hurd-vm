@@ -1,12 +1,7 @@
-          #pkg install -y curl
-          pwd
+          uname -a
+          lsb_release -a 2>/dev/null || echo 'lsb_release not available'
           ls -lah
           whoami
           env
-          freebsd-version
-          uname -a
-          #sysctl hw.model
-          sysctl hw.ncpu
-          sysctl hw.physmem
-          sysctl hw.usermem
-
+          nproc
+          free -h

@@ -38,6 +38,8 @@ jobs:
 
           mkdir -p .github/tpl
           cat base-vm/.github/tpl/README.tpl.md >.github/tpl/README.tpl.md
+          # Patch RELEASE_TABLE in datafile.ini to use hurd-builder
+          sed -i 's|anyvm-org/freebsd-builder|anyvm-org/hurd-builder|g' .github/data/datafile.ini || true
 
       - name: Generate files
         uses: anyvm-org/template-render@v0.0.4

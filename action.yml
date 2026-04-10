@@ -1,10 +1,10 @@
-name: 'FreeBSD-vm'
-description: 'Run CI in FreeBSD for GitHub Actions'
+name: 'hurd-vm'
+description: 'Run CI in Debian GNU/Hurd for GitHub Actions'
 inputs:
   osname:
     description: 'The OS name'
     required: true
-    default: 'FreeBSD'
+    default: 'hurd'
   prepare:
     description: 'Install some tools before CI runs'
     required: false
@@ -12,13 +12,13 @@ inputs:
     description: 'The CI command to run'
     required: false
   release:
-    description: 'The release version of FreeBSD vm'
+    description: 'The release version of Debian Hurd vm'
     required: false
   arch:
-    description: 'The cpu architecture of FreeBSD vm'
+    description: 'The cpu architecture of Debian Hurd vm'
     required: false
   envs:
-    description: 'The envs to pass into FreeBSD vm'
+    description: 'The envs to pass into Hurd vm'
     required: false
   mem:
     description: 'Set the memory size of the vm'
@@ -28,7 +28,7 @@ inputs:
     description: 'Set the cpu cores of the vm'
     required: false
   nat:
-    description: 'The NAT ports to FreeBSD vm'
+    description: 'The NAT ports to Hurd vm'
     required: false
   usesh:
     description: 'Use sh instead of the default shell. Default is false.'

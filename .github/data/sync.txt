@@ -1,8 +1,2 @@
 
 
-Becareful: 
-
-If you use `arch: riscv64`, you can only use `sync: scp` for now.
-
-
-
