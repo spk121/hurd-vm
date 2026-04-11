@@ -56,7 +56,11 @@ All the `GITHUB_*` as well as `CI=true` env variables are passed into the VM.
 
 ## 2. Share code
 
-The code is shared from the host to the VM via `rsync` by default. You can also use `scp`:
+The action defaults to `sync: rsync`, but the default Debian GNU/Hurd image does not include `rsync`.
+
+If `rsync` is missing in the VM, the action falls back to `scp` automatically.
+
+To use true `rsync` mode, install `rsync` in the VM first (for example in `prepare`). Otherwise, use `sync: scp` explicitly:
 
 ```yaml
     - name: Test

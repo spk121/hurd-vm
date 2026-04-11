@@ -72,7 +72,11 @@ So, you will have the same directory and same default env variables when you `ru
 
 ## 2. Share code
 
-The code is shared from the host to the VM via `rsync` by default. You can also use `scp`, or set `sync: no` to skip syncing entirely. (`sshfs` and `nfs` are not supported on Debian GNU/Hurd.)
+The action defaults to `sync: rsync`, but the default Debian GNU/Hurd image does not include `rsync`.
+
+If `rsync` is missing in the VM, the action falls back to `scp` automatically.
+
+To use true `rsync` mode, install `rsync` in the VM first (for example in `prepare`). Otherwise, use `sync: scp` explicitly. You can also set `sync: no` to skip syncing entirely. (`sshfs` and `nfs` are not supported on Debian GNU/Hurd.)
 
 
 ```yaml
