@@ -111,6 +111,7 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
   ];
 
   let envExports = "";
+  let githubCmdFilesSetup = "";
   // For Hurd, the work path differs from the host — rewrite GITHUB_* paths
   if (work && vmwork && work !== vmwork) {
     const workRegex = new RegExp(work.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
@@ -129,10 +130,26 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
         envExports += `export ${key}="${newVal}"\n`;
       }
     }
+
+    githubCmdFilesSetup = [
+      'for f in "$GITHUB_ENV" "$GITHUB_OUTPUT" "$GITHUB_PATH" "$GITHUB_STATE" "$GITHUB_STEP_SUMMARY"; do',
+      '  if [ -n "${f:-}" ]; then',
+      '    mkdir -p "$(dirname "$f")"',
+      '    : >> "$f"',
+      '  fi',
+      'done',
+      'if [ -n "${GITHUB_EVENT_PATH:-}" ]; then',
+      '  mkdir -p "$(dirname "$GITHUB_EVENT_PATH")"',
+      '  if [ ! -e "$GITHUB_EVENT_PATH" ]; then',
+      "    printf '{}' > \"$GITHUB_EVENT_PATH\"",
+      '  fi',
+      'fi',
+      ''
+    ].join('\n');
   }
 
   try {
-    const fullCmd = "set -eu\n" + envExports + cmd;
+    const fullCmd = "set -eu\n" + envExports + githubCmdFilesSetup + cmd;
     await exec.exec("ssh", [...args, sshHost, "sh"], {
       input: Buffer.from(fullCmd),
       silent: silent
@@ -254,13 +271,12 @@ async function scpToVM(sshHost, work, vmwork, debug) {
       "-p",
       "-o", "StrictHostKeyChecking=no",
       "-o", "UserKnownHostsFile=/dev/null",
-      "-v",
       localPath,
       `${sshHost}:${vmwork}/`
     ];
 
     core.info(`[${i + 1}/${total}] ${percent}% Uploading: ${localPath} -> ${sshHost}:${vmwork}/`);
-    await exec.exec("scp", scpArgs, { silent: false });
+    await exec.exec("scp", scpArgs, { silent: true });
   }
 
   core.info("==> Done.");
