@@ -474,8 +474,7 @@ async function main() {
 
     const work = path.join(process.env["HOME"], "work");
     const vmwork = '/root/work';
-
-    // Parse user env names for path rewriting
+    // Parse user-specified env var names for path rewriting.
     const userEnvNames = envs ? envs.split(/\s+/).filter(Boolean) : [];
 
     // 2. Load Config
@@ -495,31 +494,40 @@ async function main() {
     }
 
     core.startGroup("Configuration");
-    core.info(`QEMU System: ${qemuSystem}`);
-    core.info(`Image URL:   ${imageUrl}`);
-    core.info(`SSH User:    ${sshUser}`);
-    core.info(`SSH Port:    ${sshPort}`);
-    core.endGroup();
+    try {
+      core.info(`QEMU System: ${qemuSystem}`);
+      core.info(`Image URL:   ${imageUrl}`);
+      core.info(`SSH User:    ${sshUser}`);
+      core.info(`SSH Port:    ${sshPort}`);
+    } finally {
+      core.endGroup();
+    }
 
-    // 3. Generate SSH key pair for this run
+    // 3. Generate SSH key pair
     core.startGroup("SSH Key");
     const sshDir = path.join(process.env["HOME"], ".ssh");
-    if (!fs.existsSync(sshDir)) {
-      fs.mkdirSync(sshDir, { recursive: true });
+    let sshKeyPath, sshKeyPub;
+    try {
+      if (!fs.existsSync(sshDir)) {
+        fs.mkdirSync(sshDir, { recursive: true });
+      }
+      sshKeyPath = path.join(sshDir, "hurd_vm_key");
+      sshKeyPub = await generateSSHKey(sshKeyPath);
+      core.info(`SSH public key: ${sshKeyPub}`);
+    } finally {
+      core.endGroup();
     }
-    const sshKeyPath = path.join(sshDir, "hurd_vm_key");
-    const sshKeyPub = await generateSSHKey(sshKeyPath);
-    core.info(`SSH public key: ${sshKeyPub}`);
-    core.endGroup();
 
     // 4. Install dependencies
     core.startGroup("Installing dependencies");
-    await install(sync, debug);
-    core.endGroup();
+    try {
+      await install(sync, debug);
+    } finally {
+      core.endGroup();
+    }
 
-    // 5. Cache
-    // We use a date-based key derived from the current week so the image
-    // refreshes weekly but cache hits within the same week avoid re-downloading.
+    // 5. Cache restore
+    // Use a weekly cache key to balance freshness and cache hit rate.
     const now = new Date();
     const weekKey = `${now.getFullYear()}-W${String(Math.ceil(((now - new Date(now.getFullYear(),0,1)) / 86400000 + 1) / 7)).padStart(2,'0')}`;
     const cacheKey = `hurd-image-latest-amd64-${weekKey}`;
@@ -534,34 +542,40 @@ async function main() {
     const archiveFileName = 'debian-hurd.img.tar.gz';
     const archivePath = path.join(dataDir, archiveFileName);
 
-    core.startGroup("Cache");
     let cacheHit = false;
-    if (!disableCache) {
-      try {
-        const restoredKey = await cache.restoreCache(
-          [archivePath],
-          cacheKey,
-          ['hurd-image-latest-amd64-']
-        );
-        if (restoredKey && fs.existsSync(archivePath)) {
-          cacheHit = true;
-          core.info(`Cache hit: ${restoredKey}`);
-        } else {
-          core.info("No cache hit for disk image.");
+    core.startGroup("Cache");
+    try {
+      if (!disableCache) {
+        try {
+          const restoredKey = await cache.restoreCache(
+            [archivePath],
+            cacheKey,
+            ['hurd-image-latest-amd64-']
+          );
+          if (restoredKey && fs.existsSync(archivePath)) {
+            cacheHit = true;
+            core.info(`Cache hit: ${restoredKey}`);
+          } else {
+            core.info("No cache hit for disk image.");
+          }
+        } catch (e) {
+          core.warning(`Cache restore failed: ${e.message}`);
         }
-      } catch (e) {
-        core.warning(`Cache restore failed: ${e.message}`);
+      } else {
+        core.info("Cache disabled.");
       }
-    } else {
-      core.info("Cache disabled.");
+    } finally {
+      core.endGroup();
     }
-    core.endGroup();
 
-    // 6. Download image if not cached, then save to cache before starting the VM.
+    // 6. Download if not cached
     if (!cacheHit || !fs.existsSync(archivePath)) {
       core.startGroup("Downloading Hurd disk image");
-      await downloadFile(imageUrl, archivePath);
-      core.endGroup();
+      try {
+        await downloadFile(imageUrl, archivePath);
+      } finally {
+        core.endGroup();
+      }
 
       if (!disableCache) {
         core.startGroup("Saving image to cache");
@@ -574,78 +588,90 @@ async function main() {
           } else {
             core.warning(`Cache save failed: ${e.message}`);
           }
+        } finally {
+          core.endGroup();
         }
-        core.endGroup();
       }
     }
 
-    // 7. Extract the image archive
+    // 7. Extract image
     core.startGroup("Extracting disk image");
-    const extractDir = path.join(dataDir, 'hurd-extract');
-    if (!fs.existsSync(extractDir)) {
-      fs.mkdirSync(extractDir, { recursive: true });
+    let imagePath;
+    try {
+      const extractDir = path.join(dataDir, 'hurd-extract');
+      if (!fs.existsSync(extractDir)) {
+        fs.mkdirSync(extractDir, { recursive: true });
+      }
+      const existingImgs = fs.readdirSync(extractDir).filter(f => f.endsWith('.img'));
+      for (const f of existingImgs) {
+        fs.unlinkSync(path.join(extractDir, f));
+      }
+      await exec.exec("tar", ["-xf", archivePath, "-C", extractDir]);
+      const imgFiles = fs.readdirSync(extractDir).filter(f => f.endsWith('.img'));
+      if (imgFiles.length === 0) {
+        throw new Error(`No .img file found after extracting ${archivePath} into ${extractDir}`);
+      }
+      imagePath = path.join(extractDir, imgFiles[0]);
+      core.info(`Using image: ${imagePath}`);
+    } finally {
+      core.endGroup();
     }
-    const existingImgs = fs.readdirSync(extractDir).filter(f => f.endsWith('.img'));
-    for (const f of existingImgs) {
-      fs.unlinkSync(path.join(extractDir, f));
-    }
-    await exec.exec("tar", ["-xf", archivePath, "-C", extractDir]);
-    const imgFiles = fs.readdirSync(extractDir).filter(f => f.endsWith('.img'));
-    if (imgFiles.length === 0) {
-      throw new Error(`No .img file found after extracting ${archivePath} into ${extractDir}`);
-    }
-    const imagePath = path.join(extractDir, imgFiles[0]);
-    core.info(`Using image: ${imagePath}`);
-    core.endGroup();
 
-    // 8. Prepare image: inject SSH key via qemu-nbd
+    // 8. Inject SSH key
     core.startGroup("Preparing image (SSH key injection)");
-    await prepareHurdImage(imagePath, sshKeyPub, debug);
-    core.endGroup();
+    try {
+      await prepareHurdImage(imagePath, sshKeyPub, debug);
+    } finally {
+      core.endGroup();
+    }
 
-    // 9. Parse NAT port mappings
+    // 9. NAT + start QEMU
     const natPortsList = parseNatPorts(nat);
     if (debug === 'true') {
       core.info(`NAT ports: ${JSON.stringify(natPortsList)}`);
     }
 
-    // 10. Start QEMU
     core.startGroup("Starting Hurd VM");
-    await startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList, debug);
-    core.endGroup();
+    try {
+      await startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList, debug);
+    } finally {
+      core.endGroup();
+    }
 
-    // 11. Wait for SSH
+    // 10. Wait for SSH
     core.startGroup("Waiting for SSH");
     const sshHostAlias = 'hurd';
+    try {
+      const sshConfigPath = path.join(sshDir, "config");
+      let sshConfigEntry = `Host ${sshHostAlias}\n`;
+      sshConfigEntry += `  HostName 127.0.0.1\n`;
+      sshConfigEntry += `  Port ${sshPort}\n`;
+      sshConfigEntry += `  User ${sshUser}\n`;
+      sshConfigEntry += `  IdentityFile ${sshKeyPath}\n`;
+      sshConfigEntry += `  StrictHostKeyChecking no\n`;
+      sshConfigEntry += `  UserKnownHostsFile /dev/null\n`;
 
-    const sshConfigPath = path.join(sshDir, "config");
-    let sshConfigEntry = `Host ${sshHostAlias}\n`;
-    sshConfigEntry += `  HostName 127.0.0.1\n`;
-    sshConfigEntry += `  Port ${sshPort}\n`;
-    sshConfigEntry += `  User ${sshUser}\n`;
-    sshConfigEntry += `  IdentityFile ${sshKeyPath}\n`;
-    sshConfigEntry += `  StrictHostKeyChecking no\n`;
-    sshConfigEntry += `  UserKnownHostsFile /dev/null\n`;
+      let sendEnvs = [];
+      if (envs) sendEnvs.push(envs);
+      sendEnvs.push("CI");
+      if (sendEnvs.length > 0) {
+        sshConfigEntry += `  SendEnv ${sendEnvs.join(" ")}\n`;
+      }
+      sshConfigEntry += "\n";
+      sshConfigEntry += "Host *\n  StrictHostKeyChecking no\n";
 
-    let sendEnvs = [];
-    if (envs) sendEnvs.push(envs);
-    sendEnvs.push("CI");
-    if (sendEnvs.length > 0) {
-      sshConfigEntry += `  SendEnv ${sendEnvs.join(" ")}\n`;
+      fs.writeFileSync(sshConfigPath, sshConfigEntry);
+
+      if (debug === 'true') {
+        core.info("SSH config:");
+        core.info(fs.readFileSync(sshConfigPath, 'utf8'));
+      }
+
+      // Hurd can be slow to boot and start sshd, so use a long timeout here.
+      await waitForSSH(sshHostAlias, 300, debug);
+    } finally {
+      core.endGroup();
     }
-    sshConfigEntry += "\n";
-    sshConfigEntry += "Host *\n  StrictHostKeyChecking no\n";
-
-    fs.writeFileSync(sshConfigPath, sshConfigEntry);
-
-    if (debug === 'true') {
-      core.info("SSH config:");
-      core.info(fs.readFileSync(sshConfigPath, 'utf8'));
-    }
-
-    // Hurd can take a while to boot — allow up to 5 minutes
-    await waitForSSH(sshHostAlias, 300, debug);
-    core.endGroup();
 
     const sshConfig = {
       host: sshHostAlias,
@@ -654,26 +680,28 @@ async function main() {
       userEnvNames: userEnvNames
     };
 
-    // 12. Register a custom shell wrapper so users can write: shell: hurd {0}
+    // 11. Register custom shell wrapper
     const localBinDir = path.join(process.env["HOME"], ".local", "bin");
     if (!fs.existsSync(localBinDir)) {
       fs.mkdirSync(localBinDir, { recursive: true });
     }
     const sshWrapperPath = path.join(localBinDir, sshHostAlias);
-    const sshWrapperContent = `#!/usr/bin/env sh\n\nssh ${sshHostAlias} sh<$1\n`;
-    fs.writeFileSync(sshWrapperPath, sshWrapperContent);
+    fs.writeFileSync(sshWrapperPath, `#!/usr/bin/env sh\n\nssh ${sshHostAlias} sh<$1\n`);
     fs.chmodSync(sshWrapperPath, '755');
 
-    // 13. Run onStarted hook
+    // 12. onStarted hook
     const onStartedHook = path.join(__dirname, 'hooks', 'onStarted.sh');
     if (fs.existsSync(onStartedHook)) {
-      core.startGroup(`Running onStarted hook`);
-      const hookContent = fs.readFileSync(onStartedHook, 'utf8');
-      await execSSH(hookContent, sshConfig, false, debug !== 'true');
-      core.endGroup();
+      core.startGroup("Running onStarted hook");
+      try {
+        const hookContent = fs.readFileSync(onStartedHook, 'utf8');
+        await execSSH(hookContent, sshConfig, false, debug !== 'true');
+      } finally {
+        core.endGroup();
+      }
     }
 
-    // 14. File sync
+    // 13. File sync
     if (process.platform !== 'win32') {
       const homeDir = process.env.HOME;
       if (homeDir) {
@@ -685,136 +713,146 @@ async function main() {
       }
     }
 
-    // sshfs and nfs are not supported on Hurd
-    let effectiveSync = sync;
+    // These don't seem to be in the default Debian Hurd images and are complex to set up, so disallow them to avoid user confusion.
     if (sync === 'sshfs' || sync === 'nfs') {
       throw new Error(`Sync mode '${sync}' is not supported on Debian GNU/Hurd. Use 'rsync', 'scp', or 'no' instead.`);
     }
 
-    // rsync requires the rsync binary in the guest VM. If missing, use scp.
+    // Also rsync isn't in the default Debian Hurd image,
+    // but I don't want to get rid of this functionality yet.
+    let effectiveSync = sync;
     if (effectiveSync === 'rsync' && !(await hasRsyncInVM(sshHostAlias))) {
       core.warning("rsync is not installed in the VM; falling back to scp for file sync.");
       effectiveSync = 'scp';
     }
 
-    let isScpOrRsync = false;
-    if (effectiveSync === 'scp' || effectiveSync === 'rsync') {
-      isScpOrRsync = true;
-    }
+    const isScpOrRsync = effectiveSync === 'scp' || effectiveSync === 'rsync';
 
     if (isScpOrRsync) {
       core.startGroup("Syncing source code to VM");
-      await execSSH(`rm -rf ${vmwork}`, { ...sshConfig });
-      await execSSH(`mkdir -p ${vmwork}`, { ...sshConfig });
-      if (effectiveSync === 'scp') {
-        core.info("Syncing via SCP");
-        await scpToVM(sshHostAlias, work, vmwork, debug);
-      } else {
-        core.info("Syncing via Rsync");
-        const rsyncArgs = [
-          debug === 'true' ? "-avrtopg" : "-artopg",
-          "--exclude", "_actions",
-          "--exclude", "_PipelineMapping",
-          "--exclude", "_temp",
-          "-e", "ssh",
-          work + "/",
-          `${sshHostAlias}:${vmwork}/`
-        ];
-        await exec.exec("rsync", rsyncArgs);
-        if (debug === 'true') {
-          core.startGroup("Debug: VM work directory");
-          await execSSH(`ls -la ${vmwork}`, { ...sshConfig });
-          core.endGroup();
-        }
-      }
-      core.endGroup();
-    }
-
-    if (effectiveSync !== 'no') {
-      core.startGroup('Creating workdir symlink');
-      await execSSH(`ln -sf ${vmwork} $HOME/work`, { ...sshConfig });
-      core.endGroup();
-    }
-
-    // 15. Run onInitialized hook
-    const onInitializedHook = path.join(__dirname, 'hooks', 'onInitialized.sh');
-    if (fs.existsSync(onInitializedHook)) {
-      core.startGroup(`Running onInitialized hook`);
-      const hookContent = fs.readFileSync(onInitializedHook, 'utf8');
-      await execSSH(hookContent, sshConfig, false, debug !== 'true');
-      core.endGroup();
-    }
-
-    // 16. Run prepare
-    try {
-      core.startGroup("Run 'prepare' in VM");
-      if (prepare) {
-        const prepareCmd = (effectiveSync !== 'no') ? `cd "$GITHUB_WORKSPACE"\n${prepare}` : prepare;
-        await execSSH(prepareCmd, { ...sshConfig });
-      }
-      core.endGroup();
-    } catch (err) {
-      core.endGroup();
-      if (debugOnError) {
-        await handleErrorWithDebug(sshHostAlias, debug);
-      } else {
-        throw err;
-      }
-    }
-
-    // 17. Run user command
-    try {
-      core.startGroup("Run 'run' in VM");
-      if (run) {
-        const runCmd = (effectiveSync !== 'no') ? `cd "$GITHUB_WORKSPACE"\n${run}` : run;
-        await execSSH(runCmd, { ...sshConfig });
-      }
-      core.endGroup();
-    } catch (err) {
-      core.endGroup();
-      if (debugOnError) {
-        await handleErrorWithDebug(sshHostAlias, debug);
-      } else {
-        throw err;
-      }
-    }
-
-    // 18. Copy results back from VM to host
-    if (copyback !== 'false' && effectiveSync !== 'no') {
-      const workspace = process.env['GITHUB_WORKSPACE'];
-      if (workspace) {
-        core.startGroup("Copyback artifacts");
+      try {
+        await execSSH(`rm -rf ${vmwork}`, { ...sshConfig });
+        await execSSH(`mkdir -p ${vmwork}`, { ...sshConfig });
         if (effectiveSync === 'scp') {
-          const remoteTarCmd = `cd "${vmwork}" && tar -cf - --exclude .git .`;
-          core.info(`Remote tar: ${remoteTarCmd}`);
-
-          await new Promise((resolve, reject) => {
-            const sshProc = spawn("ssh", ["-o", "StrictHostKeyChecking=no", sshHostAlias, remoteTarCmd]);
-            const tarProc = spawn("tar", ["-xf", "-"], { cwd: work });
-
-            sshProc.stdout.pipe(tarProc.stdin);
-            sshProc.stderr.on('data', (d) => core.info(`[SSH] ${d}`));
-            tarProc.stderr.on('data', (d) => core.info(`[TAR] ${d}`));
-
-            sshProc.on('close', (code) => { if (code !== 0) reject(new Error(`SSH exited ${code}`)); });
-            tarProc.on('close', (code) => { if (code !== 0) reject(new Error(`tar exited ${code}`)); else resolve(); });
-            sshProc.on('error', reject);
-            tarProc.on('error', reject);
-          });
+          core.info("Syncing via SCP");
+          await scpToVM(sshHostAlias, work, vmwork, debug);
         } else {
-          await exec.exec("rsync", [
-            debug === 'true' ? "-av" : "-a",
-            "--exclude", ".git",
+          core.info("Syncing via Rsync");
+          const rsyncArgs = [
+            debug === 'true' ? "-avrtopg" : "-artopg",
+            "--exclude", "_actions",
+            "--exclude", "_PipelineMapping",
+            "--exclude", "_temp",
             "-e", "ssh",
-            `${sshHostAlias}:${vmwork}/`,
-            `${work}/`
-          ]);
+            work + "/",
+            `${sshHostAlias}:${vmwork}/`
+          ];
+          await exec.exec("rsync", rsyncArgs);
+          if (debug === 'true') {
+            core.startGroup("Debug: VM work directory");
+            try {
+              await execSSH(`ls -la ${vmwork}`, { ...sshConfig });
+            } finally {
+              core.endGroup();
+            }
+          }
         }
+      } finally {
         core.endGroup();
       }
     }
 
-    // 19. Save the PID file path for cleanup.js
+    if (effectiveSync !== 'no') {
+      core.startGroup("Creating workdir symlink");
+      try {
+        await execSSH(`ln -sf ${vmwork} $HOME/work`, { ...sshConfig });
+      } finally {
+        core.endGroup();
+      }
+    }
+
+    // 14. onInitialized hook
+    const onInitializedHook = path.join(__dirname, 'hooks', 'onInitialized.sh');
+    if (fs.existsSync(onInitializedHook)) {
+      core.startGroup("Running onInitialized hook");
+      try {
+        const hookContent = fs.readFileSync(onInitializedHook, 'utf8');
+        await execSSH(hookContent, sshConfig, false, debug !== 'true');
+      } finally {
+        core.endGroup();
+      }
+    }
+
+    // 15. prepare
+    core.startGroup("Run 'prepare' in VM");
+    try {
+      if (prepare) {
+        const prepareCmd = (effectiveSync !== 'no') ? `cd "$GITHUB_WORKSPACE"\n${prepare}` : prepare;
+        await execSSH(prepareCmd, { ...sshConfig });
+      }
+    } catch (err) {
+      if (debugOnError) {
+        await handleErrorWithDebug(sshHostAlias, debug);
+      } else {
+        throw err;
+      }
+    } finally {
+      core.endGroup();
+    }
+
+    // 16. run
+    core.startGroup("Run 'run' in VM");
+    try {
+      if (run) {
+        const runCmd = (effectiveSync !== 'no') ? `cd "$GITHUB_WORKSPACE"\n${run}` : run;
+        await execSSH(runCmd, { ...sshConfig });
+      }
+    } catch (err) {
+      if (debugOnError) {
+        await handleErrorWithDebug(sshHostAlias, debug);
+      } else {
+        throw err;
+      }
+    } finally {
+      core.endGroup();
+    }
+
+    // 17. Copyback results from VM to host
+    if (copyback !== 'false' && effectiveSync !== 'no') {
+      const workspace = process.env['GITHUB_WORKSPACE'];
+      if (workspace) {
+        core.startGroup("Copyback artifacts");
+        try {
+          if (effectiveSync === 'scp') {
+            const remoteTarCmd = `cd "${vmwork}" && tar -cf - --exclude .git .`;
+            core.info(`Remote tar: ${remoteTarCmd}`);
+            await new Promise((resolve, reject) => {
+              const sshProc = spawn("ssh", ["-o", "StrictHostKeyChecking=no", sshHostAlias, remoteTarCmd]);
+              const tarProc = spawn("tar", ["-xf", "-"], { cwd: work });
+              sshProc.stdout.pipe(tarProc.stdin);
+              sshProc.stderr.on('data', (d) => core.info(`[SSH] ${d}`));
+              tarProc.stderr.on('data', (d) => core.info(`[TAR] ${d}`));
+              sshProc.on('close', (code) => { if (code !== 0) reject(new Error(`SSH exited ${code}`)); });
+              tarProc.on('close', (code) => { if (code !== 0) reject(new Error(`tar exited ${code}`)); else resolve(); });
+              sshProc.on('error', reject);
+              tarProc.on('error', reject);
+            });
+          } else {
+            await exec.exec("rsync", [
+              debug === 'true' ? "-av" : "-a",
+              "--exclude", ".git",
+              "-e", "ssh",
+              `${sshHostAlias}:${vmwork}/`,
+              `${work}/`
+            ]);
+          }
+        } finally {
+          core.endGroup();
+        }
+      }
+    }
+
+    // 18. Save state for cleanup
     const pidFile = path.join(os.tmpdir(), 'hurd-vm.pid');
     core.saveState('pidFile', pidFile);
     core.saveState('sshKeyPath', sshKeyPath);
