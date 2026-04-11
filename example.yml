@@ -1,0 +1,90 @@
+name: Debian GNU/Hurd VM
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: "Repository to checkout"
+        default: "spk121/guile"
+        required: false
+        type: string
+      ref:
+        description: "Git ref to checkout"
+        default: ""
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Repository to checkout"
+        default: "spk121/guile"
+        required: false
+        type: string
+      ref:
+        description: "Git ref to checkout"
+        default: ""
+        required: false
+        type: string
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      # Build and test in a single VM step to:
+      # 1. Avoid the overhead of launching multiple separate VM instances
+      # 2. Keep the build workspace and test logs available to the archive step
+      - name: Build and Test in Debian GNU/Hurd VM
+        uses: spk121/hurd-vm@v1
+        with:
+          sync: scp
+          prepare: |
+            apt-get update
+            apt-get install -y \
+              build-essential \
+              texlive-base \
+              texinfo \
+              autoconf \
+              automake \
+              m4 \
+              llvm \
+              libtool \
+              gettext \
+              gperf \
+              pkg-config \
+              lzip \
+              libgc-dev \
+              gmp-dev \
+              libffi-dev \
+              libltdl-dev \
+              libunistring-dev
+          run: |
+            set -eux
+            export LANG=C.UTF-8
+            mkdir -p "$(pwd)/app"
+            sed -i 's/^/;;/' test-suite/tests/version.test
+            sed -i 's|\${M4:-m4} --version|command -v "${M4:-m4}"|' autogen.sh
+            ./autogen.sh
+            ./configure CFLAGS="-g -O2 -Wall" --prefix="$(pwd)/app" --enable-mini-gmp
+            make -j"$(nproc)" V=1 2>&1 | tee build.log
+            make check V=1
+
+      - name: Archive Test Logs
+        if: success() || failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Test Logs
+          path: |
+            ./*.log
+            ./**/*.log
+          if-no-files-found: warn

@@ -1,0 +1,53 @@
+name: Debian GNU/Hurd VM (Minimal)
+
+on:
+  workflow_call:
+    inputs:
+      repository:
+        description: "Repository to checkout"
+        default: "spk121/guile"
+        required: false
+        type: string
+      ref:
+        description: "Git ref to checkout"
+        default: ""
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Repository to checkout"
+        default: "spk121/guile"
+        required: false
+        type: string
+      ref:
+        description: "Git ref to checkout"
+        default: ""
+        required: false
+        type: string
+
+jobs:
+  minimal:
+    name: Minimal Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+
+      - name: Run in Debian GNU/Hurd VM
+        uses: spk121/hurd-vm@v1
+        with:
+          sync: scp
+          run: |
+            set -eu
+            uname -a
+            whoami
+            pwd
+            ls -lah
