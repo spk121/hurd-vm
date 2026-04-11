@@ -23,70 +23,7 @@ concurrency:
 
 
 jobs:
-  test-rsync:
-    runs-on: ubuntu-24.04
-    name: rsync default Debian GNU/Hurd
-    env:
-      MYTOKEN : ${{ secrets.MYTOKEN }}
-      MYTOKEN2: "value2"
-      GH_TOKEN: ${{ secrets.GH_TOKEN }}
-    steps:
-    - uses: actions/checkout@v6
-    - name: Test in Debian GNU/Hurd
-      id: test
-      uses: ./
-      with:
-        envs: 'MYTOKEN MYTOKEN2'
-        prepare: |
-          
-        mem: 2048
-        nat: |
-          "20022": "22"
-          "8080": "80"
-          "8443": "443"
-          udp:"8081": "80"
-        debug: true
-        run: |
-          env
-          echo "TEST_ENV=abc" >>${GITHUB_ENV}
-          uname -a
-          ls -lah
-          whoami
-          env
-          nproc
-          free -h
-
-    - name: Test NAT
-      env:
-        VM_USER: ""
-      run: |
-        set -e
-        echo "TEST_ENV=$TEST_ENV"
-        [ "$TEST_ENV" = "abc" ]
-        ssh \
-          -v \
-          -o BatchMode=yes \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          -i "$HOME/.ssh/hurd_vm_key" \
-          -p 20022 \
-          ${VM_USER:-root}@localhost \
-          "uname -a;whoami;pwd"
-
-    - name: Test custom shell
-      shell: hurd {0}
-      run: |
-        pwd
-        uname -a
-        ls -lah
-        whoami
-        env
-        nproc
-        free -h
-
-
   test-scp:
-    needs: test-rsync
     runs-on: ubuntu-24.04
     name: scp Debian GNU/Hurd
     env:
@@ -102,7 +39,7 @@ jobs:
       with:
         envs: 'DEBUG MYTOKEN MYTOKEN2'
         prepare: |
-          
+
         mem: 2048
         nat: |
           "20022": "22"
@@ -127,19 +64,42 @@ jobs:
           nproc
           free -h
 
+    - name: Test NAT
+      run: |
+        set -e
+        echo "TEST_ENV=$TEST_ENV"
+        [ "$TEST_ENV" = "abc" ]
+        ssh \
+          -o BatchMode=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -i "$HOME/.ssh/hurd_vm_key" \
+          -p 20022 \
+          root@localhost \
+          "uname -a;whoami;pwd"
+
     - name: Test files
       run: |
         set -e
-        [ -e "$GITHUB_WORKSPACE/vm.txt" ];
-        cat "$GITHUB_WORKSPACE/vm.txt";
-        grep "textfromvm" $GITHUB_WORKSPACE/vm.txt;
-        cat ${GITHUB_ENV}
-        echo "TEST_ENV=$TEST_ENV";
-        [ "$TEST_ENV" = "abc" ];
+        [ -e "$GITHUB_WORKSPACE/vm.txt" ]
+        cat "$GITHUB_WORKSPACE/vm.txt"
+        grep "textfromvm" $GITHUB_WORKSPACE/vm.txt
+        echo "TEST_ENV=$TEST_ENV"
+        [ "$TEST_ENV" = "abc" ]
+
+    - name: Test custom shell
+      shell: hurd {0}
+      run: |
+        pwd
+        uname -a
+        ls -lah
+        whoami
+        nproc
+        free -h
 
 
   test-error:
-    needs: test-rsync
+    needs: test-scp
     runs-on: ubuntu-24.04
     name: test error handling Debian GNU/Hurd
     steps:
@@ -165,7 +125,7 @@ jobs:
         exit 0
 
   test-success:
-    needs: test-rsync
+    needs: test-error
     runs-on: ubuntu-24.04
     name: test success handling Debian GNU/Hurd
     steps:
