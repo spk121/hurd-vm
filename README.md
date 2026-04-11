@@ -154,18 +154,14 @@ By default, the action caches the VM disk image to speed up subsequent runs. To 
 
 ## 7. Debug on error
 
-Set `debug-on-error: true` to get a VNC link for interactive debugging when `prepare` or `run` fails. Run `touch ~/continue` inside the VM to resume the action.
+Set `debug-on-error: true` to pause the action when `prepare` or `run` fails. After debugging inside the VM, run `touch ~/continue` to resume.
 
 ```yaml
     - name: Test
       uses: spk121/hurd-vm@v1
       with:
         debug-on-error: ${{ vars.DEBUG_ON_ERROR }}
-        vnc-password: ${{ secrets.VNC_PASSWORD }}
 ```
-
-See more: [debug on error](https://github.com/vmactions/.github/wiki/debug%E2%80%90on%E2%80%90error)
-
 
 # Under the hood
 

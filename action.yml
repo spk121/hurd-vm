@@ -36,22 +36,12 @@ inputs:
   data-dir:
     description: 'Directory to store VM data/images.'
     required: false
-  cache-dir:
-    description: 'Directory to store anyvm cache. If set, overrides default temp cache path.'
-    required: false
-  sync-time:
-    description: 'Synchronize the VM time with the ntp. Default is false.'
-    required: false
   disable-cache:
     description: 'Disable caching for apt packages and VM images. Default is false.'
     required: false
     default: 'false'
   debug-on-error:
-    description: 'If true, enable remote VNC and you can connect to the VM via web VNC page to debug. Default is false.'
-    required: false
-    default: ''
-  vnc-password:
-    description: 'The VNC password. Default is empty.'
+    description: 'If true, pause when prepare/run fails and wait until ~/continue appears in the VM. Default is false.'
     required: false
     default: ''
 branding:

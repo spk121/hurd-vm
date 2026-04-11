@@ -17,9 +17,6 @@
   ],
   "author": "",
   "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/spk121/hurd-vm/issues"
-  },
   "homepage": "https://github.com/spk121/hurd-vm",
   "dependencies": {
     "@actions/core": "^3.0.0",

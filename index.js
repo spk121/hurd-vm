@@ -161,12 +161,8 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
   }
 }
 
-async function handleErrorWithDebug(sshHost, vncLink, debug) {
-  const message = vncLink
-    ? `Please open the remote vnc link for debugging: ${vncLink} . To finish debugging, you can run \`touch ~/continue\` in the VM.`
-    : "Please open the remote vnc link for debugging. To finish debugging, you can run `touch ~/continue` in the VM.";
-
-  core.warning(message);
+async function handleErrorWithDebug(sshHost, debug) {
+  core.warning("Debug-on-error is enabled. The VM is paused; run 'touch ~/continue' in the VM to continue.");
 
   const args = [
     "-o", "StrictHostKeyChecking=no",
@@ -757,7 +753,7 @@ async function main() {
     } catch (err) {
       core.endGroup();
       if (debugOnError) {
-        await handleErrorWithDebug(sshHostAlias, "", debug);
+        await handleErrorWithDebug(sshHostAlias, debug);
       } else {
         throw err;
       }
@@ -774,7 +770,7 @@ async function main() {
     } catch (err) {
       core.endGroup();
       if (debugOnError) {
-        await handleErrorWithDebug(sshHostAlias, "", debug);
+        await handleErrorWithDebug(sshHostAlias, debug);
       } else {
         throw err;
       }

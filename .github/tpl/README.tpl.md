@@ -68,8 +68,6 @@ All the `GITHUB_*` as well as `CI=true` env variables are passed into the VM.
 
 So, you will have the same directory and same default env variables when you `run` the CI script.
 
-{{VM_SHELL_COMMENTS}}
-
 
 
 ## 2. Share code
@@ -140,7 +138,7 @@ You can add NAT port between the host and the VM.
 
 ## 4. Set memory and cpu
 
-The default memory of the VM is 6144MB, you can use `mem` option to set the memory size:
+The default memory of the VM is 2048MB, you can use `mem` option to set the memory size:
 
 ```yaml
 
@@ -168,22 +166,7 @@ The VM is using all the cpu cores of the host by default, you can use `cpu` opti
 ```
 
 
-## 5. Select release
-
-It uses [the {{VM_NAME}} {{DEFAULT_RELEASE}}](conf/default.release.conf) by default, you can use `release` option to use another version of {{VM_NAME}}:
-
-```yaml
-...
-    - name: Test
-      id: test
-      uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
-      with:
-        release: "{{VM_SET_RELEASE}}"
-...
-```
-
-
-## 6. Custom shell
+## 5. Custom shell
 
 Support custom shell:
 
@@ -195,7 +178,7 @@ Support custom shell:
       id: vm
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
-        sync: nfs
+        sync: scp
     - name: Custom shell step 1
       shell: {{VM_OS_NAME}} {0}
       run: |
@@ -212,24 +195,9 @@ Support custom shell:
 ```
 
 
-## 7. Synchronize VM time
+## 6. Disable cache
 
-If the time in VM is not correct, You can use `sync-time` option to synchronize the VM time with NTP:
-
-```yaml
-...
-    - name: Test
-      id: test
-      uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
-      with:
-        sync-time: true
-...
-```
-
-
-## 8. Disable cache
-
-By default, the action caches `apt` packages on the host and VM images/artifacts. You can use the `disableCache` option to disable this:
+By default, the action caches the VM image archive to speed up later runs. You can use `disable-cache: true` to disable this:
 
 ```yml
 ...
@@ -242,11 +210,11 @@ By default, the action caches `apt` packages on the host and VM images/artifacts
 ```
 
 
-## 9. Debug on error
+## 7. Debug on error
 
 If you want to debug the VM when the `prepare` or `run` step fails, you can set `debug-on-error: true`.
 
-When a failure occurs, the action will enable a remote VNC link and wait for your interaction. You can then access the VM via VNC to debug. To continue or finish the action, you can run `touch ~/continue` inside the VM.
+When a failure occurs, the action pauses and waits for your interaction. To continue or finish the action, run `touch ~/continue` inside the VM.
 
 [First create a variable `DEBUG_ON_ERROR` with value being "true"](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-variables),
 
@@ -262,27 +230,6 @@ Then use it in the workflow:
 
 ...
 ```
-
-You can also set the `vnc-password` parameter to set a custom password to protect the VNC link:
-
-```yaml
-...
-    - name: Test
-      id: test
-      uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
-      with:
-        debug-on-error: ${{ vars.DEBUG_ON_ERROR }}
-        vnc-password: ${{ secrets.VNC_PASSWORD }}
-
-...
-```
-
-You will be asked to input the username and password when you access the VNC link. The username can be any string, the password is the value of the `vnc-password` parameter.
-
-
-See more: [debug on error](https://github.com/vmactions/.github/wiki/debug%E2%80%90on%E2%80%90error)
-
-
 
 # Under the hood
 
