@@ -63,7 +63,15 @@ jobs:
         set -e
         echo "TEST_ENV=$TEST_ENV"
         [ "$TEST_ENV" = "abc" ]
-        ssh -v  -p 20022 ${VM_USER:-root}@localhost  "uname -a;whoami;pwd"
+        ssh \
+          -v \
+          -o BatchMode=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -i "$HOME/.ssh/hurd_vm_key" \
+          -p 20022 \
+          ${VM_USER:-root}@localhost \
+          "uname -a;whoami;pwd"
 
     - name: Test custom shell
       shell: hurd {0}
