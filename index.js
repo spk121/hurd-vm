@@ -377,7 +377,7 @@ async function startQemu(qemuSystem, imagePath, mem, cpu, sshPort, natPortsList,
     "-drive", `file=${imagePath},format=raw,cache=writeback`,
     "-net", `user,${hostfwds}`,
     "-net", "nic,model=e1000",
-    "-nographic",
+    "-display", "none",
     "-daemonize",
     "-pidfile", pidFile,
   ];
