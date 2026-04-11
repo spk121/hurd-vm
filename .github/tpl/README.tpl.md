@@ -1,23 +1,15 @@
 # Run GitHub CI in {{VM_NAME}} ![Test](https://github.com/{{GITHUB_REPOSITORY}}/workflows/Test/badge.svg)
 
-Powered by [AnyVM.org](https://anyvm.org)
-
 Use this action to run your CI in {{VM_NAME}}.
 
-The github workflow only supports Ubuntu, Windows and MacOS. But what if you need to use {{VM_NAME}}?
+GitHub Actions only supports Ubuntu, Windows, and macOS runners. This action launches the latest {{VM_NAME}} in a QEMU VM on an Ubuntu runner, so you can build and test software targeting the Hurd.
+
+The image is always the latest available from [cdimage.debian.org](https://cdimage.debian.org/cdimage/ports/latest/hurd-amd64/).
 
 
-All the supported releases are here:
-
-{{RELEASE_TABLE}}
-
-
-
-
-## 1. Example: `test.yml`:
+## 1. Example: `test.yml`
 
 ```yml
-
 name: Test
 
 on: [push]
@@ -37,152 +29,101 @@ jobs:
       with:
         envs: 'MYTOKEN MYTOKEN2'
         prepare: |
-          {{VM_PREPARE}}
+          apt-get update
+          apt-get install -y curl
 
         run: |
 {{VM_RUN}}
-
-
-
-
 ```
 
+The `envs: 'MYTOKEN MYTOKEN2'` is the env names that you want to pass into the VM.
 
-The latest major version is: `{{LATEST_MAJOR}}`, which is the most recommended to use. (You can also use the latest full version: `{{LATEST_TAG}}`)  
-
-
-If you are migrating from the previous `v0`, please change the `runs-on: ` to `runs-on: {{VM_RUNS_ON}}`
-
-
-The `envs: 'MYTOKEN MYTOKEN2'` is the env names that you want to pass into the vm.
-
-The `run: xxxxx`  is the command you want to run in the vm.
+The `run: xxxxx` is the command you want to run in the VM.
 
 The env variables are all copied into the VM, and the source code and directory are all synchronized into the VM.
 
-The working dir for `run` in the VM is the same as in the Host machine.
+The working dir for `run` in the VM is the same as in the host machine.
 
-All the source code tree in the Host machine are mounted into the VM.
+All the source code tree in the host machine are mounted into the VM.
 
 All the `GITHUB_*` as well as `CI=true` env variables are passed into the VM.
-
-So, you will have the same directory and same default env variables when you `run` the CI script.
-
 
 
 ## 2. Share code
 
-The action defaults to `sync: rsync`, but the default Debian GNU/Hurd image does not include `rsync`.
+The action defaults to `sync: rsync`, but the default {{VM_NAME}} image does not include `rsync`.
 
 If `rsync` is missing in the VM, the action falls back to `scp` automatically.
 
-To use true `rsync` mode, install `rsync` in the VM first (for example in `prepare`). Otherwise, use `sync: scp` explicitly. You can also set `sync: no` to skip syncing entirely. (`sshfs` and `nfs` are not supported on Debian GNU/Hurd.)
-
+To use true `rsync` mode, install `rsync` in the VM first (for example in `prepare`). Otherwise, use `sync: scp` explicitly:
 
 ```yaml
-
-...
-
     - name: Test
-      id: test
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
         sync: scp
-
-
-...
-
-
 ```
 
-You can also set `sync: no`, so the files will not be synced to the  VM.
+Set `sync: no` to skip file syncing entirely.
 
-
-When using `rsync` or `scp`,  you can define `copyback: false` to not copy files back from the VM in to the host.
-
+When using `rsync` or `scp`, you can set `copyback: false` to skip copying files back from the VM to the host:
 
 ```yaml
-
-...
-
     - name: Test
-      id: test
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
         sync: rsync
         copyback: false
-
-
-...
-
-
 ```
-
-
-{{VM_SYNC_COMMENTS}}
 
 
 ## 3. NAT from host runner to the VM
 
-You can add NAT port between the host and the VM.
+You can add NAT port forwarding between the host and the VM:
 
 ```yaml
-...
     - name: Test
-      id: test
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
         nat: |
           "8080": "80"
           "8443": "443"
           udp:"8081": "80"
-...
 ```
 
 
-## 4. Set memory and cpu
+## 4. Set memory and CPU
 
-The default memory of the VM is 2048MB, you can use `mem` option to set the memory size:
+The default memory is 2048MB. Use `mem` to change it:
 
 ```yaml
-
-...
     - name: Test
-      id: test
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
         mem: 4096
-...
 ```
 
-
-The VM is using all the cpu cores of the host by default, you can use `cpu` option to change the cpu cores:
+The VM uses 1 CPU core by default. Use `cpu` to increase it:
 
 ```yaml
-
-...
     - name: Test
-      id: test
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
         cpu: 3
-...
 ```
 
 
 ## 5. Custom shell
 
-Support custom shell:
+You can use multiple steps with a custom shell:
 
 ```yaml
-...
     steps:
     - uses: actions/checkout@v6
     - name: Start VM
-      id: vm
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
-        sync: scp
+        sync: rsync
     - name: Custom shell step 1
       shell: {{VM_OS_NAME}} {0}
       run: |
@@ -195,49 +136,59 @@ Support custom shell:
         cd $GITHUB_WORKSPACE;
         pwd
         echo "this is step 2, running inside the VM"
-...
 ```
 
 
 ## 6. Disable cache
 
-By default, the action caches the VM image archive to speed up later runs. You can use `disable-cache: true` to disable this:
+By default, the action caches the VM disk image to speed up subsequent runs. To disable caching:
 
 ```yml
-...
     - name: Test
-      id: test
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
         disable-cache: true
-...
 ```
 
 
-## 7. Debug on error
+## 7. Custom data directory
 
-If you want to debug the VM when the `prepare` or `run` step fails, you can set `debug-on-error: true`.
+By default, VM images are stored in `$RUNNER_TEMP/hurd-vm-data`. Use `data-dir` to store them elsewhere:
 
-When a failure occurs, the action pauses and waits for your interaction. To continue or finish the action, run `touch ~/continue` inside the VM.
+```yml
+    - name: Test
+      uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
+      with:
+        data-dir: /mnt/fast-storage/hurd-vm
+```
 
-[First create a variable `DEBUG_ON_ERROR` with value being "true"](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-variables),
 
-Then use it in the workflow:
+## 8. Debug logging
+
+Set `debug: true` to enable verbose logging throughout the action (SSH attempts, timing, file listings, etc.):
 
 ```yaml
-...
     - name: Test
-      id: test
+      uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
+      with:
+        debug: true
+```
+
+
+## 9. Debug on error
+
+Set `debug-on-error: true` to pause the action when `prepare` or `run` fails. After debugging inside the VM, run `touch ~/continue` to resume.
+
+```yaml
+    - name: Test
       uses: {{GITHUB_REPOSITORY}}@{{LATEST_MAJOR}}
       with:
         debug-on-error: ${{ vars.DEBUG_ON_ERROR }}
-
-...
 ```
 
 # Under the hood
 
-We use Qemu to run the {{VM_NAME}} VM.
+We use QEMU to run the {{VM_NAME}} VM.
 
 Debian GNU/Hurd is a port of the Debian GNU system to the GNU Hurd kernel (based on GNU Mach).
 More information: https://www.debian.org/ports/hurd/
