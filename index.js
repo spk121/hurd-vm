@@ -422,6 +422,17 @@ async function waitForSSH(sshHost, timeoutSec, debug) {
   throw new Error(`Timed out waiting for SSH on ${sshHost} after ${timeoutSec}s`);
 }
 
+// Check whether rsync is available inside the VM.
+async function hasRsyncInVM(sshHost) {
+  const rc = await exec.exec("ssh", [
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    sshHost,
+    "command -v rsync >/dev/null 2>&1"
+  ], { silent: true, ignoreReturnCode: true });
+  return rc === 0;
+}
+
 async function main() {
   try {
     // 1. Inputs
@@ -658,6 +669,12 @@ async function main() {
     let effectiveSync = sync;
     if (sync === 'sshfs' || sync === 'nfs') {
       throw new Error(`Sync mode '${sync}' is not supported on Debian GNU/Hurd. Use 'rsync', 'scp', or 'no' instead.`);
+    }
+
+    // rsync requires the rsync binary in the guest VM. If missing, use scp.
+    if (effectiveSync === 'rsync' && !(await hasRsyncInVM(sshHostAlias))) {
+      core.warning("rsync is not installed in the VM; falling back to scp for file sync.");
+      effectiveSync = 'scp';
     }
 
     let isScpOrRsync = false;
