@@ -232,10 +232,12 @@ async function scpToVM(sshHost, work, vmwork, debug) {
   core.info(`==> Ensuring ${vmwork} exists...`);
   await execSSH(`mkdir -p ${vmwork}`, { host: sshHost, osName: 'hurd', work, vmwork });
 
-  core.info("==> Uploading files via scp (excluding _actions and _PipelineMapping)...");
+  core.info("==> Uploading files via scp (excluding _actions, _PipelineMapping, and _temp)...");
 
   const items = await fs.promises.readdir(work, { withFileTypes: true });
-  const uploadItems = items.filter((item) => item.name !== "_actions" && item.name !== "_PipelineMapping");
+  const uploadItems = items.filter((item) =>
+    item.name !== "_actions" && item.name !== "_PipelineMapping" && item.name !== "_temp"
+  );
 
   const total = uploadItems.length;
   core.info(`==> SCP upload queue: ${total} top-level item(s)`);
@@ -698,6 +700,7 @@ async function main() {
           debug === 'true' ? "-avrtopg" : "-artopg",
           "--exclude", "_actions",
           "--exclude", "_PipelineMapping",
+          "--exclude", "_temp",
           "-e", "ssh",
           work + "/",
           `${sshHostAlias}:${vmwork}/`
