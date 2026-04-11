@@ -100,7 +100,6 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
   core.info(`Exec SSH: ${cmd}`);
 
   const sshHost = sshConfig.host;
-  const osName = sshConfig.osName;
   const work = sshConfig.work;
   const vmwork = sshConfig.vmwork;
   const userEnvNames = sshConfig.userEnvNames || [];
@@ -243,7 +242,7 @@ async function install(sync, debug) {
 
 async function scpToVM(sshHost, work, vmwork, debug) {
   core.info(`==> Ensuring ${vmwork} exists...`);
-  await execSSH(`mkdir -p ${vmwork}`, { host: sshHost, osName: 'hurd', work, vmwork });
+  await execSSH(`mkdir -p ${vmwork}`, { host: sshHost, work, vmwork });
 
   core.info("==> Uploading files via scp (excluding _actions, _PipelineMapping, and _temp)...");
 
@@ -454,7 +453,6 @@ async function main() {
   try {
     // 1. Inputs
     const debug = core.getInput("debug");
-    const inputOsName = core.getInput("osname").toLowerCase();
     const mem = core.getInput("mem") || '2048';
     const cpu = core.getInput("cpu");
     const nat = core.getInput("nat");
@@ -468,7 +466,6 @@ async function main() {
 
     const work = path.join(process.env["HOME"], "work");
     const vmwork = '/root/work';
-    const osName = inputOsName;
 
     // Parse user env names for path rewriting
     const userEnvNames = envs ? envs.split(/\s+/).filter(Boolean) : [];
@@ -490,7 +487,6 @@ async function main() {
     }
 
     core.startGroup("Configuration");
-    core.info(`OS Name:     ${osName}`);
     core.info(`QEMU System: ${qemuSystem}`);
     core.info(`Image URL:   ${imageUrl}`);
     core.info(`SSH User:    ${sshUser}`);
@@ -612,7 +608,7 @@ async function main() {
 
     // 11. Wait for SSH
     core.startGroup("Waiting for SSH");
-    const sshHostAlias = osName || 'hurd';
+    const sshHostAlias = 'hurd';
 
     const sshConfigPath = path.join(sshDir, "config");
     let sshConfigEntry = `Host ${sshHostAlias}\n`;
@@ -645,7 +641,6 @@ async function main() {
 
     const sshConfig = {
       host: sshHostAlias,
-      osName: osName,
       work: work,
       vmwork: vmwork,
       userEnvNames: userEnvNames
@@ -759,7 +754,7 @@ async function main() {
       }
     }
 
-    // 16. Run user command
+    // 17. Run user command
     try {
       core.startGroup("Run 'run' in VM");
       if (run) {
@@ -776,7 +771,7 @@ async function main() {
       }
     }
 
-    // 17. Copy results back from VM to host
+    // 18. Copy results back from VM to host
     if (copyback !== 'false' && effectiveSync !== 'no') {
       const workspace = process.env['GITHUB_WORKSPACE'];
       if (workspace) {
@@ -811,7 +806,7 @@ async function main() {
       }
     }
 
-    // Save the PID file path for cleanup.js
+    // 19. Save the PID file path for cleanup.js
     const pidFile = path.join(os.tmpdir(), 'hurd-vm.pid');
     core.saveState('pidFile', pidFile);
     core.saveState('sshKeyPath', sshKeyPath);

@@ -1,10 +1,6 @@
 name: 'hurd-vm'
 description: 'Run CI in Debian GNU/Hurd for GitHub Actions'
 inputs:
-  osname:
-    description: 'The OS name'
-    required: true
-    default: 'hurd'
   prepare:
     description: 'Install some tools before CI runs'
     required: false
@@ -19,13 +15,13 @@ inputs:
     required: false
     default: '2048'
   cpu:
-    description: 'Set the cpu cores of the vm'
+    description: 'Set the cpu cores of the vm. Default is 1.'
     required: false
   nat:
     description: 'The NAT ports to Hurd vm'
     required: false
   sync:
-    description: 'How to synchronize the source code to/from the VM. Default is rsync.'
+    description: 'How to synchronize the source code to/from the VM. Accepted values: rsync, scp, no. Default is rsync (falls back to scp if rsync is not installed in the VM).'
     required: false
   copyback:
     description: 'whether or not to copy the build result repo back from the VM to the host, default is true'

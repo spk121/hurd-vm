@@ -108,7 +108,7 @@ The default memory is 2048MB. Use `mem` to change it:
         mem: 4096
 ```
 
-The VM uses all the host's CPU cores by default. Use `cpu` to limit it:
+The VM uses 1 CPU core by default. Use `cpu` to increase it:
 
 ```yaml
     - name: Test
@@ -156,7 +156,31 @@ By default, the action caches the VM disk image to speed up subsequent runs. To 
 ```
 
 
-## 7. Debug on error
+## 7. Custom data directory
+
+By default, VM images are stored in `$RUNNER_TEMP/hurd-vm-data`. Use `data-dir` to store them elsewhere:
+
+```yml
+    - name: Test
+      uses: spk121/hurd-vm@v1
+      with:
+        data-dir: /mnt/fast-storage/hurd-vm
+```
+
+
+## 8. Debug logging
+
+Set `debug: true` to enable verbose logging throughout the action (SSH attempts, timing, file listings, etc.):
+
+```yaml
+    - name: Test
+      uses: spk121/hurd-vm@v1
+      with:
+        debug: true
+```
+
+
+## 9. Debug on error
 
 Set `debug-on-error: true` to pause the action when `prepare` or `run` fails. After debugging inside the VM, run `touch ~/continue` to resume.
 
