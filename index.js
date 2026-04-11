@@ -235,12 +235,15 @@ async function scpToVM(sshHost, work, vmwork, debug) {
   core.info("==> Uploading files via scp (excluding _actions and _PipelineMapping)...");
 
   const items = await fs.promises.readdir(work, { withFileTypes: true });
+  const uploadItems = items.filter((item) => item.name !== "_actions" && item.name !== "_PipelineMapping");
 
-  for (const item of items) {
+  const total = uploadItems.length;
+  core.info(`==> SCP upload queue: ${total} top-level item(s)`);
+
+  for (let i = 0; i < uploadItems.length; i++) {
+    const item = uploadItems[i];
     const itemName = item.name;
-    if (itemName === "_actions" || itemName === "_PipelineMapping") {
-      continue;
-    }
+    const percent = total > 0 ? Math.round(((i + 1) / total) * 100) : 100;
 
     const localPath = path.join(work, itemName);
     const scpArgs = [
@@ -248,14 +251,14 @@ async function scpToVM(sshHost, work, vmwork, debug) {
       "-r",
       "-p",
       "-o", "StrictHostKeyChecking=no",
+      "-o", "UserKnownHostsFile=/dev/null",
+      "-v",
       localPath,
       `${sshHost}:${vmwork}/`
     ];
 
-    if (debug === 'true') {
-      core.info(`Uploading: ${localPath} to ${sshHost}:${vmwork}/`);
-    }
-    await exec.exec("scp", scpArgs, { silent: debug !== 'true' });
+    core.info(`[${i + 1}/${total}] ${percent}% Uploading: ${localPath} -> ${sshHost}:${vmwork}/`);
+    await exec.exec("scp", scpArgs, { silent: false });
   }
 
   core.info("==> Done.");
