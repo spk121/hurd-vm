@@ -96,6 +96,13 @@ function downloadFile(url, dest) {
   });
 }
 
+// Safely quote a value for POSIX shell assignment.
+// Single-quoting is used; internal single-quotes are handled with the
+// classic  '  →  '\''  technique.
+function shellQuote(value) {
+  return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
 async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
   core.info(`Exec SSH: ${cmd}`);
 
@@ -111,22 +118,23 @@ async function execSSH(cmd, sshConfig, ignoreReturn = false, silent = false) {
 
   let envExports = "";
   let githubCmdFilesSetup = "";
-  // For Hurd, the work path differs from the host — rewrite GITHUB_* paths
+
+  // For Hurd, the work path differs from the host - rewrite GITHUB_* paths
   if (work && vmwork && work !== vmwork) {
     const workRegex = new RegExp(work.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
     for (const key of Object.keys(process.env)) {
       if (key.startsWith('GITHUB_') || key === 'CI') {
         const val = process.env[key] || "";
         const newVal = val.replace(workRegex, vmwork);
-        envExports += `export ${key}="${newVal}"\n`;
+        envExports += `export ${key}=${shellQuote(newVal)}\n`;
       }
     }
-    // Also export user-specified env vars (with path rewriting)
+    // Also export user-specified env vars with path rewriting
     for (const key of userEnvNames) {
       if (key && !key.startsWith('GITHUB_') && key !== 'CI' && process.env[key] !== undefined) {
         const val = process.env[key] || "";
         const newVal = val.replace(workRegex, vmwork);
-        envExports += `export ${key}="${newVal}"\n`;
+        envExports += `export ${key}=${shellQuote(newVal)}\n`;
       }
     }
 
