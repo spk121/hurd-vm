@@ -289,9 +289,10 @@ async function prepareHurdImage(imagePath, sshKeyPub, debug) {
 
   await exec.exec("sudo", ["mkdir", "-p", "/mnt/hurd-root"]);
 
-  // Try partition 1 first (standard Debian layout), then the raw device
+  // Hurd images commonly use p1 for swap and p2 for rootfs.
+  // Try likely root partitions first, then fall back to the raw device.
   let mounted = false;
-  for (const dev of ["/dev/nbd0p1", "/dev/nbd0"]) {
+  for (const dev of ["/dev/nbd0p2", "/dev/nbd0p1", "/dev/nbd0"]) {
     const rc = await exec.exec("sudo", ["mount", dev, "/mnt/hurd-root"], { ignoreReturnCode: true });
     if (rc === 0) {
       core.info(`Mounted ${dev} successfully.`);
