@@ -25,7 +25,7 @@ jobs:
     - uses: actions/checkout@v6
     - name: Test in Debian GNU/Hurd
       id: test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         envs: 'MYTOKEN MYTOKEN2'
         prepare: |
@@ -34,11 +34,13 @@ jobs:
 
         run: |
           uname -a
+          lsb_release -a 2>/dev/null || echo 'lsb_release not available'
           ls -lah
           whoami
           env
           nproc
           free -h
+
 ```
 
 The `envs: 'MYTOKEN MYTOKEN2'` is the env names that you want to pass into the VM.
@@ -64,7 +66,7 @@ To use true `rsync` mode, install `rsync` in the VM first (for example in `prepa
 
 ```yaml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         sync: scp
 ```
@@ -75,7 +77,7 @@ When using `rsync` or `scp`, you can set `copyback: false` to skip copying files
 
 ```yaml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         sync: rsync
         copyback: false
@@ -88,7 +90,7 @@ You can add NAT port forwarding between the host and the VM:
 
 ```yaml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         nat: |
           "8080": "80"
@@ -103,7 +105,7 @@ The default memory is 2048MB. Use `mem` to change it:
 
 ```yaml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         mem: 4096
 ```
@@ -112,7 +114,7 @@ The VM uses 1 CPU core by default. Use `cpu` to increase it:
 
 ```yaml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         cpu: 3
 ```
@@ -126,7 +128,7 @@ You can use multiple steps with a custom shell:
     steps:
     - uses: actions/checkout@v6
     - name: Start VM
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         sync: rsync
     - name: Custom shell step 1
@@ -150,7 +152,7 @@ By default, the action caches the VM disk image to speed up subsequent runs. To 
 
 ```yml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         disable-cache: true
 ```
@@ -162,7 +164,7 @@ By default, VM images are stored in `$RUNNER_TEMP/hurd-vm-data`. Use `data-dir` 
 
 ```yml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         data-dir: /mnt/fast-storage/hurd-vm
 ```
@@ -174,7 +176,7 @@ Set `debug: true` to enable verbose logging throughout the action (SSH attempts,
 
 ```yaml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         debug: true
 ```
@@ -186,7 +188,7 @@ Set `debug-on-error: true` to pause the action when `prepare` or `run` fails. Af
 
 ```yaml
     - name: Test
-      uses: spk121/hurd-vm@v1
+      uses: spk121/hurd-vm@v0
       with:
         debug-on-error: ${{ vars.DEBUG_ON_ERROR }}
 ```
